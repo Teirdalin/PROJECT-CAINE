@@ -6,6 +6,7 @@
 #include <caine/native_menu_state.hpp>
 #include <caine/native_bridge.hpp>
 #include <caine/logging.hpp>
+#include <caine/overlay_input.hpp>
 #include <shellapi.h>
 #include <algorithm>
 #include <array>
@@ -111,7 +112,9 @@ bool IsGamePage() { return page==Page::Settings || page==Page::Credits || page==
 void PrepareGameBridge() {
     if (gameBridgeChecked) return;
     gameBridgeChecked=true;
-    const auto backend=caine::NativeGameMenuBackend(caine::Module::Inspect(GetModuleHandleW(L"client.dll")));
+    const auto client=caine::Module::Inspect(GetModuleHandleW(L"client.dll"));
+    caine::InstallOverlayInput(client,logger);
+    const auto backend=caine::NativeGameMenuBackend(client);
     if (!backend) { logger("CAINE_GAME_MENUS_UNAVAILABLE: engine interface profile mismatch; native dialogs retained");return; }
     const auto root=caine::ModulePath(nullptr).parent_path();auto active=root/L"Vampire";
     int count{};const auto args=CommandLineToArgvW(GetCommandLineW(),&count);
@@ -174,6 +177,9 @@ LRESULT CALLBACK WindowProcedure(HWND window, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg==WM_ACTIVATEAPP) caine::TraceLog("CAINE_WINDOW_FOCUS: active="+std::to_string(wp!=0));
     else if (msg==WM_SIZE) caine::TraceLog("CAINE_WINDOW_SIZE: width="+std::to_string(LOWORD(lp))+" height="+std::to_string(HIWORD(lp))+" mode="+std::to_string(wp));
     else if (msg==WM_CLOSE || msg==WM_DESTROY) caine::TraceLog("CAINE_WINDOW_EXIT: message="+std::to_string(msg));
+    if (msg==WM_KILLFOCUS || (msg==WM_ACTIVATEAPP && !wp) || msg==WM_DESTROY) {
+        caine::CaptureOverlayInput(window,false);if (renderer) renderer->ClearInput();
+    }
     if (caine::CaptureIntroEscape(window,msg,wp)) return 0;
     const bool modal = modernReady && (modernShown || overlayShown) && GetTickCount64()-lastModernFrame<500;
     if (modal && renderer) renderer->Input(msg, wp, lp);
@@ -192,6 +198,7 @@ LRESULT CALLBACK WindowProcedure(HWND window, UINT msg, WPARAM wp, LPARAM lp) {
         }
     }
     if (modal) {
+        if (overlayShown && msg==WM_SETCURSOR) { SetCursor(nullptr);return TRUE; }
         if (msg == WM_KEYDOWN && wp == VK_ESCAPE && !bindingCapture) {
             if (overlayShown) overlayActions.push_back([id=overlayMod] { caine::ModGameUI(id,nullptr,CAINE_GAMEUI_CLOSE,0); });
             else if (page!=Page::Home) actions.push_back([] { confirmAction=-1;Go(Page::Home); });
@@ -251,6 +258,12 @@ void __fastcall MenuClick(void* self, void*, int id) {
             if (id >= 0 && static_cast<size_t>(id) < rows.size() && rows[id].action) actions.push_back(rows[id].action);
             return;
         }
+        if (id==caine::MenuContinue && modernReady && modernEnabled && gameMenus) {
+            const auto blocking=caine::BlockingMod();
+            if (!blocking.empty()) actions.push_back([blocking]{selected=blocking;OpenConfig();});
+            else actions.push_back([] { if (gameMenus->ContinueLatest()) Go(Page::Home);else message="No saved game is available in this game profile."; });
+            return;
+        }
         if (id == 5) { actions.push_back([] { Go(Page::Mods); }); return; }
         if (modernReady && modernEnabled && (id==9 || id==10 || id==13)) {
             int count{};const auto native=itemsOriginal(self,&count);
@@ -299,6 +312,8 @@ void __fastcall MenuPaint(void* self, void*) {
         if (page==Page::Home && !nativeBusy) {
             int count{};const auto ids=itemsOriginal(self,&count);
             if (ids && count>=0 && count<=12) {
+                if (gameMenus && std::find(ids,ids+count,11)==ids+count && std::find(ids,ids+count,3)==ids+count)
+                    nativeItems.push_back({caine::MenuContinue,"Continue",!gameMenus->HasContinueSave()});
                 for (int i=0;i<count;++i) {
                     const int id=ids[i];
                     if (id==9 || id==10) { nativeItems.push_back({5,"Mods"});if (gameMenus) nativeItems.push_back({12,"Credits"}); }
@@ -350,6 +365,10 @@ void CollectOverlayControl(void* context,const CaineControlV1* value) {
     output.push_back({value->kind,value->id,value->flags,value->maxBytes,copy(value->label),copy(value->text),copy(value->hint),value->number,value->minimum,value->maximum});
 }
 bool PaintGameUI(IDirect3DDevice9* device) {
+    struct ReleaseOnFailure {
+        bool rendered{};
+        ~ReleaseOnFailure() { if (!rendered) CaptureOverlayInput(gameWindow,false); }
+    } capture;
     while (!overlayActions.empty()) { auto action=std::move(overlayActions.front());overlayActions.pop_front();action(); }
     const auto owner=ActiveGameUI();
     if (owner.empty() || !gameWindow) {
@@ -362,6 +381,7 @@ bool PaintGameUI(IDirect3DDevice9* device) {
     // Clear commands latched before this overlay captured window input.
     if (!overlayShown && inputCommand) inputCommand("-forward\n-back\n-moveleft\n-moveright\n-left\n-right\n-attack\n-attack2\n-jump\n-duck\n-use\n");
     modernReady=true;
+    CaptureOverlayInput(gameWindow,true);
     MenuView view;view.overlay=true;view.wantsText=true;view.selected=owner;view.pageTitle=owner;
     for (const auto& mod:ModCatalog()) if (mod.id==owner) view.pageTitle=mod.name;
     const CaineMenuV1 api{sizeof(CaineMenuV1),&view.controls,nullptr,CollectOverlayControl,nullptr};
@@ -379,6 +399,7 @@ bool PaintGameUI(IDirect3DDevice9* device) {
         });
         else if (event.kind==MenuActionKind::Close) overlayActions.push_back([owner] { ModGameUI(owner,nullptr,CAINE_GAMEUI_CLOSE,0); });
     }
+    capture.rendered=true;
     return true;
 }
 }
@@ -398,6 +419,9 @@ void PaintModernMenu(IDirect3DDevice9* device) {
         EnumWindows(FindGameWindow,0);
         if (gameWindow) previousProcedure=reinterpret_cast<WNDPROC>(SetWindowLongPtrW(gameWindow,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(WindowProcedure)));
     }
+    // Every frame releases capture unless an overlay successfully renders below.
+    // Renewal happens before polling on the next game frame.
+    if (ActiveGameUI().empty() || !modernEnabled || (menuPainted && !(page==Page::Home && nativeBusy))) CaptureOverlayInput(gameWindow,false);
     PulseNativeBridge(gameWindow,inputCommand);
     PaintIntroSkip(device,gameWindow,menuPainted);
     // Only the passive intro overlay can draw without a native menu paint.
@@ -427,6 +451,7 @@ void PaintModernMenu(IDirect3DDevice9* device) {
     if (selected.empty() && !view.mods.empty()) selected = view.mods.front().id;
     view.selected = selected;
     if (page==Page::Confirm) {
+        view.confirmation=true;
         view.pageTitle=confirmAction==9?"Quit to Main Menu?":"Quit to Desktop?";
         view.controls={{CAINE_CONTROL_TEXT,0,0,0,"Any unsaved progress will be lost."},
             {CAINE_CONTROL_BUTTON,1,0,0,confirmAction==9?"Quit to Main Menu":"Quit to Desktop"},

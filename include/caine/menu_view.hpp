@@ -15,7 +15,8 @@ struct MenuControl {
     double number{}, minimum{}, maximum{};
     std::vector<std::string> options;
 };
-struct NativeMenuItem { int id; std::string label; };
+struct NativeMenuItem { int id; std::string label; bool disabled{}; };
+constexpr int MenuContinue = 0x10000;
 struct MenuView {
     std::vector<ModInfo> mods;
     std::string selected, message, pageTitle;
@@ -26,6 +27,7 @@ struct MenuView {
     bool home{};
     bool configure{}, wantsText{};
     bool overlay{};
+    bool confirmation{};
     bool intro{}, skipping{};
     float skipProgress{};
     UpdateSnapshot update;

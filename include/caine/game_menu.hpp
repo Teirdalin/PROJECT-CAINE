@@ -30,6 +30,8 @@ public:
     void Open(GameMenuPage page);
     void Build(MenuView& view);
     bool Action(uint32_t id, const std::string& text, double number); // true: return to main menu
+    bool HasContinueSave(); // Cached listing; only the active profile's saves.
+    bool ContinueLatest();  // Revalidates the file at click time.
 private:
     GameMenuBackend backend_;
     std::filesystem::path root_, active_;
@@ -41,6 +43,8 @@ private:
     std::optional<VideoMode> pendingMode_;
     std::vector<std::pair<std::string,std::string>> actionsList_;
     std::vector<std::filesystem::path> saves_;
+    std::optional<std::filesystem::path> continueSave_;
+    ULONGLONG continueChecked_{};
     std::string credits_;
     std::map<uint32_t,std::function<bool(const std::string&,double)>> actions_;
 };

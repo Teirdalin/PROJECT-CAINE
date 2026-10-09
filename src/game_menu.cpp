@@ -26,6 +26,21 @@ std::string Upper(std::string text) {
     std::transform(text.begin(),text.end(),text.begin(),[](unsigned char c){return static_cast<char>(std::toupper(c));});return text;
 }
 bool Redirected(const std::filesystem::path& path) { const auto attr=GetFileAttributesW(path.c_str());return attr!=INVALID_FILE_ATTRIBUTES && (attr&FILE_ATTRIBUTE_REPARSE_POINT); }
+std::vector<std::filesystem::path> SaveFiles(const std::filesystem::path& active) {
+    std::vector<std::pair<std::filesystem::file_time_type,std::filesystem::path>> entries;
+    std::error_code error;const auto folder=active/L"save";
+    if (Redirected(active) || Redirected(folder) || !std::filesystem::is_directory(folder,error)) return {};
+    for (std::filesystem::directory_iterator it(folder,error),end;!error && it!=end;it.increment(error)) {
+        const auto path=it->path();
+        if (Redirected(path) || Upper(path.extension().u8string())!=".SAV" || !CleanToken(path.stem().u8string())) continue;
+        if (!it->is_regular_file(error) || error) { error.clear();continue; }
+        const auto bytes=it->file_size(error);if (error || !bytes) { error.clear();continue; }
+        const auto time=it->last_write_time(error);if (error) { error.clear();continue; }
+        entries.emplace_back(time,path);
+    }
+    std::sort(entries.begin(),entries.end(),[](const auto& a,const auto& b){return a.first!=b.first?a.first>b.first:a.second<b.second;});
+    std::vector<std::filesystem::path> result;for (auto& entry:entries) result.push_back(std::move(entry.second));return result;
+}
 std::string ReadLoose(const std::filesystem::path& path) {
     std::error_code error;const auto size=std::filesystem::file_size(path,error);
     if (error || size>1024*1024 || Redirected(path)) return {};
@@ -166,6 +181,25 @@ std::string ReadGameMenuResource(const std::filesystem::path& root,const std::fi
     return result;
 }
 GameMenus::GameMenus(GameMenuBackend backend,std::filesystem::path root,std::filesystem::path active):backend_(std::move(backend)),root_(std::move(root)),active_(std::move(active)) {}
+bool GameMenus::HasContinueSave() {
+    const auto now=GetTickCount64();
+    if (!continueChecked_ || now-continueChecked_>=1000) {
+        continueSave_.reset();
+        for (const auto& save:SaveFiles(active_)) {
+            std::ifstream file(save,std::ios::binary);char signature[4]{};file.read(signature,4);
+            if (file && memcmp(signature,"JSAV",4)==0) { continueSave_=save;break; }
+        }
+        continueChecked_=now;
+    }
+    return continueSave_.has_value();
+}
+bool GameMenus::ContinueLatest() {
+    // Repeat enumeration after the click: a save may have been removed or a
+    // newer quick/autosave written since the menu was drawn.
+    continueChecked_=0;if (!HasContinueSave() || !backend_.command) return false;
+    backend_.command("load "+continueSave_->stem().u8string()+"\n");
+    TraceLog("CAINE_CONTINUE_SUBMITTED: active profile's latest save");return true;
+}
 void GameMenus::RefreshBindings() {
     const auto bindings=backend_.bindings();
     for (const auto& [command,label]:actionsList_) {
@@ -210,11 +244,7 @@ void GameMenus::Open(GameMenuPage page) {
         }
     }
     if (page==GameMenuPage::Load || page==GameMenuPage::Save) {
-        saves_.clear();selectedSave_.clear();saveName_.clear();const auto folder=active_/L"save";
-        if (!Redirected(folder) && std::filesystem::is_directory(folder)) {
-            for (const auto& entry:std::filesystem::directory_iterator(folder)) if (entry.is_regular_file() && entry.path().extension()==L".sav" && !Redirected(entry.path())) saves_.push_back(entry.path());
-            std::sort(saves_.begin(),saves_.end(),[](const auto& a,const auto& b){return std::filesystem::last_write_time(a)>std::filesystem::last_write_time(b);});
-        }
+        saves_=SaveFiles(active_);selectedSave_.clear();saveName_.clear();continueChecked_=0;
     }
 }
 void GameMenus::Build(MenuView& view) {

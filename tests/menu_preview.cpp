@@ -56,7 +56,15 @@ int wmain(int argc, wchar_t** argv) {
                 view.configure=true;
                 view.rows={{"Gemini configuration",false},{"Model: gemini-2.5-flash",true},{"API keys",true},{"Validate configuration",true},{"Shared usage and request limits",true},{"Voice configuration",true},{"Back",true}};
             }
-            if (mode==L"home" || mode==L"update-available") { view.home=true;view.background=argv[2];view.nativeItems={{0,"New Game"},{1,"Load Game"},{4,"Settings"},{5,"Mods"},{12,"Credits"},{10,"Quit"}}; }
+            if (mode==L"home" || mode==L"update-available") { view.home=true;view.background=argv[2];view.nativeItems={{caine::MenuContinue,"Continue"},{0,"New Game"},{1,"Load Game"},{4,"Settings"},{5,"Mods"},{12,"Credits"},{10,"Quit"}}; }
+            if (mode==L"quit") {
+                view.pageTitle="Quit to Desktop?";view.confirmation=true;
+                view.controls={{CAINE_CONTROL_TEXT,0,0,0,"Any unsaved progress will be lost."},{CAINE_CONTROL_BUTTON,1,0,0,"Quit to Desktop"},{CAINE_CONTROL_BUTTON,2,0,0,"Cancel"}};
+            }
+            if (mode==L"ambient") {
+                view.pageTitle="Bloodlines: Unscripted";view.overlay=true;view.wantsText=true;
+                view.controls={{CAINE_CONTROL_HEADING,0,0,0,"Jack Tutorial"},{CAINE_CONTROL_TEXT,10,0,0,"Write what you would like to say below."},{CAINE_CONTROL_INPUT,1,CAINE_CONTROL_SUBMIT,8192,"Your reply"}};
+            }
             if (mode==L"update-available")view.update={caine::UpdatePhase::Available,true,"0.3.10-framework-dev","CAINE update available",0};
             if (mode==L"update") {
                 view.home=true;view.background=argv[2];view.nativeItems={{0,"New Game"},{1,"Load Game"},{4,"Settings"},{5,"Mods"},{12,"Credits"},{10,"Quit"}};
@@ -114,13 +122,27 @@ int wmain(int argc, wchar_t** argv) {
             std::vector<caine::MenuAction> events;
             for (int phase=0; phase<2; ++phase) {
                 for (int frame=0; frame<4; ++frame) {
+                    if (mode==L"ambient") renderer.Input(WM_MOUSEMOVE,0,MAKELPARAM(1550,780));
                     device->Clear(0,nullptr,D3DCLEAR_TARGET,D3DCOLOR_XRGB(15,10,13),1,0);
                     device->SetRenderState(D3DRS_FOGENABLE, TRUE); device->SetRenderState(D3DRS_LIGHTING, TRUE);
                     Check(SUCCEEDED(device->BeginScene()),"BeginScene");
-                    Check(renderer.Render(nullptr,view,events),"UI render");
+                    Check(renderer.Render(mode==L"ambient"?window:nullptr,view,events),"UI render");
                     DWORD fog{}, lighting{}; device->GetRenderState(D3DRS_FOGENABLE,&fog); device->GetRenderState(D3DRS_LIGHTING,&lighting);
                     Check(fog == TRUE && lighting == TRUE,"UI leaked render state");
                     Check(SUCCEEDED(device->EndScene()),"EndScene");
+                    if (mode==L"ambient" && width==1920 && height==1080) {
+                        ComPtr<IDirect3DSurface9> target,copy;D3DSURFACE_DESC desc{};
+                        device->GetRenderTarget(0,&target);target->GetDesc(&desc);
+                        Check(SUCCEEDED(device->CreateOffscreenPlainSurface(width,height,desc.Format,D3DPOOL_SYSTEMMEM,&copy,nullptr)),"cursor surface");
+                        Check(SUCCEEDED(device->GetRenderTargetData(target.Get(),copy.Get())),"cursor pixels");
+                        D3DLOCKED_RECT rect{};Check(SUCCEEDED(copy->LockRect(&rect,nullptr,D3DLOCK_READONLY)),"cursor lock");
+                        bool visible{};
+                        for (UINT y=760;y<900;++y) for (UINT x=1500;x<1700;++x) {
+                            const auto pixel=reinterpret_cast<const DWORD*>(static_cast<const BYTE*>(rect.pBits)+y*rect.Pitch)[x];
+                            visible|=(pixel&0xffffff)==0xffffff;
+                        }
+                        copy->UnlockRect();Check(visible,"gameplay overlay software cursor did not render");
+                    }
                     if (mode==L"intro") {
                         ComPtr<IDirect3DSurface9> target,copy;D3DSURFACE_DESC desc{};
                         device->GetRenderTarget(0,&target);target->GetDesc(&desc);

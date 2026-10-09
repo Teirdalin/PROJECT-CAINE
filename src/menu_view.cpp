@@ -4,6 +4,7 @@
 #include <backends/imgui_impl_dx9.h>
 #include <wincodec.h>
 #include <wrl/client.h>
+#include <windowsx.h>
 #include <algorithm>
 #include <map>
 #include <cmath>
@@ -110,7 +111,7 @@ struct MenuRenderer::State {
     struct Field {
         std::vector<char> buffer;
         std::string observed;
-        bool secret{};
+        bool secret{}, disabled{true};
         ~Field() { if (secret) { if (!buffer.empty()) SecureZeroMemory(buffer.data(),buffer.size());if (!observed.empty()) SecureZeroMemory(observed.data(),observed.size()); } }
     };
     std::map<std::string,Field> fields;
@@ -220,7 +221,9 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
             }
             if (event.message==WM_KEYDOWN || event.message==WM_KEYUP || event.message==WM_SYSKEYDOWN || event.message==WM_SYSKEYUP || event.message==WM_CHAR) continue;
         }
-        if (event.message == WM_LBUTTONDOWN || event.message == WM_LBUTTONUP) io.AddMouseButtonEvent(0, event.message == WM_LBUTTONDOWN);
+        if (event.message==WM_MOUSEMOVE && client.right && client.bottom)
+            io.AddMousePosEvent(static_cast<float>(GET_X_LPARAM(event.data))*width/static_cast<float>(client.right),static_cast<float>(GET_Y_LPARAM(event.data))*height/static_cast<float>(client.bottom));
+        else if (event.message == WM_LBUTTONDOWN || event.message == WM_LBUTTONUP) io.AddMouseButtonEvent(0, event.message == WM_LBUTTONDOWN);
         else if (event.message == WM_MOUSEWHEEL) io.AddMouseWheelEvent(0, static_cast<float>(GET_WHEEL_DELTA_WPARAM(event.value)) / WHEEL_DELTA);
         else if ((!view.wantsText || !view.controls.empty()) && (event.message == WM_KEYDOWN || event.message == WM_KEYUP)) {
             const auto key = Key(event.value); if (key != ImGuiKey_None) io.AddKeyEvent(key, event.message == WM_KEYDOWN);
@@ -233,8 +236,9 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
     if (view.wantsText != s.previousText) { io.ClearInputKeys(); s.previousText = view.wantsText; }
     if (!ImGui_ImplDX9_CreateDeviceObjects()) return false;
     ImGui_ImplDX9_NewFrame(); ImGui::NewFrame();
-    // Bloodlines retains cursor ownership, including its native menu cursor.
-    io.MouseDrawCursor = false;
+    // Gameplay overlays have no native cursor. Native menus keep their own
+    // cursor, avoiding the double pointer that would result from drawing both.
+    io.MouseDrawCursor = view.overlay && !view.intro;
     if (view.intro) {
         // Passive overlay: preserve the cinematic, draw no menu/cursor/widgets.
         auto draw=ImGui::GetForegroundDrawList();
@@ -260,12 +264,15 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
         if (logo==s.logos.end() && s.logos.size()<64) logo=s.logos.emplace(path,LoadLogo(s.device,path)).first;
         return logo==s.logos.end() ? nullptr : &logo->second;
     };
-    auto drawControls=[&] {
+    auto drawControls=[&](bool composer=false) {
             std::string fieldContext=view.pageTitle+view.selected;
             for (const auto& control:view.controls) if (control.kind==CAINE_CONTROL_TAB && (control.flags&CAINE_CONTROL_SELECTED)) fieldContext+=control.label;
             if (s.fieldContext!=fieldContext) { s.ClearFields();s.fieldContext=fieldContext; }
-            bool previousTab=false;
+            bool previousTab=false,previousButton=false;
             for (const auto& control:view.controls) {
+                const bool reply=control.kind==CAINE_CONTROL_INPUT && (control.flags&CAINE_CONTROL_SUBMIT);
+                if (view.overlay && reply!=composer) continue;
+                if (view.confirmation && previousButton && control.kind==CAINE_CONTROL_BUTTON) ImGui::SameLine();
                 ImGui::PushID(static_cast<int>(control.id));
                 const bool selected=(control.flags&CAINE_CONTROL_SELECTED)!=0;
                 const bool disabled=(control.flags&CAINE_CONTROL_DISABLED)!=0;
@@ -341,6 +348,8 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
                     else if (ImGui::IsItemDeactivatedAfterEdit()) emit({},number);
                 } else if (control.kind==CAINE_CONTROL_INPUT) {
                     auto& field=s.fields[fieldContext+std::to_string(control.id)+control.label];
+                    const bool focusReply=view.overlay && reply && !disabled && (field.buffer.empty() || field.disabled);
+                    field.disabled=disabled;
                     field.secret=(control.flags&CAINE_CONTROL_SECRET)!=0;
                     const size_t capacity=std::clamp<size_t>(control.maxBytes?control.maxBytes:4096,1,65536)+1;
                     if (field.buffer.size()!=capacity || field.observed!=control.text) {
@@ -349,6 +358,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
                     }
                     ImGui::TextWrapped("%s",control.label.c_str());
                     ImGui::SetNextItemWidth(std::max(70*scale,ImGui::GetContentRegionAvail().x-100*scale));
+                    if (focusReply) ImGui::SetKeyboardFocusHere();
                     const auto flags=field.secret?ImGuiInputTextFlags_Password:ImGuiInputTextFlags_None;
                     const bool changed=ImGui::InputText("##value",field.buffer.data(),field.buffer.size(),flags|ImGuiInputTextFlags_EnterReturnsTrue);
                     const bool edited=ImGui::IsItemEdited();
@@ -362,6 +372,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
                 }
                 if (!control.hint.empty()) { ImGui::PushStyleColor(ImGuiCol_Text,ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)); ImGui::TextWrapped("%s",control.hint.c_str()); ImGui::PopStyleColor(); }
                 previousTab=control.kind==CAINE_CONTROL_TAB;
+                previousButton=control.kind==CAINE_CONTROL_BUTTON;
                 ImGui::EndDisabled();ImGui::PopID();
             }
     };
@@ -391,28 +402,48 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
         ImGui::SetWindowFontScale(1.50f);
         for (const auto& item:view.nativeItems) {
             ImGui::PushID(item.id);
+            ImGui::BeginDisabled(item.disabled);
             if (ImGui::Button(item.label.c_str(),{buttonWidth,buttonHeight})) actions.push_back({MenuActionKind::Native,{},static_cast<uint32_t>(item.id)});
+            ImGui::EndDisabled();
             ImGui::PopID();
         }
         if(view.update.available && ImGui::Button("Update Available",{buttonWidth,buttonHeight}))actions.push_back({MenuActionKind::Update,{}});
         ImGui::End();ImGui::PopStyleColor(3);ImGui::PopStyleVar(2);
-        const char* version="PROJECT CAINE 0.3.13";
+        const char* version="PROJECT CAINE 0.3.14";
         const auto size=ImGui::CalcTextSize(version);
         draw->AddText({(width-size.x)/2,height-28*scale},IM_COL32(145,136,141,255),version);
+    } else if (view.confirmation) {
+        ImGui::GetBackgroundDrawList()->AddRectFilled({0,0},{width,height},IM_COL32(0,0,0,255));
+        ImGui::SetNextWindowPos({width*.5f,height*.5f},ImGuiCond_Always,{.5f,.5f});
+        ImGui::SetNextWindowSize({std::min(520*scale,width-48*scale),0},ImGuiCond_Always);
+        ImGui::Begin("CAINE confirmation",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_AlwaysAutoResize);
+        ImGui::SetWindowFontScale(1.15f);ImGui::TextWrapped("%s",view.pageTitle.c_str());ImGui::SetWindowFontScale(1);
+        ImGui::Spacing();ImGui::Separator();ImGui::Spacing();drawControls();ImGui::End();
     } else if (!view.pageTitle.empty()) {
         const float margin=24*scale;
-        const ImVec2 panel{std::min(width-2*margin,1050*scale),std::min(height-2*margin,850*scale)};
+        ImVec2 panel{std::min(width-2*margin,1050*scale),std::min(height-2*margin,850*scale)};
+        if (view.overlay) {
+            panel.x=std::min(width-2*margin,820*scale);
+            float content=0;
+            for (const auto& control:view.controls) if (control.kind!=CAINE_CONTROL_INPUT)
+                content+=ImGui::CalcTextSize(control.label.c_str(),nullptr,false,std::max(40.f,panel.x-2*margin-24*scale)).y+24*scale;
+            const float maximum=std::min(height-2*margin,580*scale);
+            panel.y=std::clamp(content+200*scale,std::min(310*scale,maximum),maximum);
+        }
         ImGui::GetBackgroundDrawList()->AddRectFilled({0,0},{width,height},view.overlay?IM_COL32(0,0,0,100):IM_COL32(0,0,0,255));
         ImGui::SetNextWindowPos({(width-panel.x)/2,(height-panel.y)/2},ImGuiCond_Always);
         ImGui::SetNextWindowSize(panel,ImGuiCond_Always);
         ImGui::Begin("CAINE game menu",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoSavedSettings);
         ImGui::SetWindowFontScale(1.3f);ImGui::TextUnformatted(view.pageTitle.c_str());ImGui::SetWindowFontScale(1);
         ImGui::Separator();
-        ImGui::BeginChild("game-menu-content",{0,ImGui::GetContentRegionAvail().y-52*scale},ImGuiChildFlags_NavFlattened);
+        const bool composer=view.overlay && std::any_of(view.controls.begin(),view.controls.end(),[](const auto& control){return control.kind==CAINE_CONTROL_INPUT && (control.flags&CAINE_CONTROL_SUBMIT);});
+        ImGui::BeginChild("game-menu-content",{0,std::max(30*scale,ImGui::GetContentRegionAvail().y-(composer?140:52)*scale)},ImGuiChildFlags_NavFlattened);
         drawControls();
         if (!view.message.empty()) { ImGui::Separator();ImGui::TextWrapped("%s",view.message.c_str()); }
         ImGui::EndChild();ImGui::Separator();
+        if (composer) { drawControls(true);ImGui::Spacing(); }
         if (ImGui::Button(view.overlay?"End Conversation":"Back")) actions.push_back({MenuActionKind::Close,{}});
+        if (view.overlay) { ImGui::SameLine();ImGui::TextDisabled("Esc to close"); }
         ImGui::End();
     } else {
     const ImVec2 margin(24 * scale, 24 * scale);
@@ -492,7 +523,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
     } else ImGui::TextWrapped("Select a mod to view its details and settings.");
     ImGui::EndChild(); ImGui::Separator();
     if (ImGui::Button("Back to main menu")) actions.push_back({MenuActionKind::Close,{}});
-    ImGui::SameLine(); ImGui::TextDisabled("  ESC  /  Close     |     CAINE 0.3.13");
+    ImGui::SameLine(); ImGui::TextDisabled("  ESC  /  Close     |     CAINE 0.3.14");
     ImGui::End();
     }
     if(view.updateOpen) {

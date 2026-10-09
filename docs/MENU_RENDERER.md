@@ -1,16 +1,23 @@
-# Modern menus (CAINE 0.3.8)
+# Modern menus (CAINE 0.3.14)
 
 CAINE draws inside Bloodlines with Dear ImGui 1.91.9b and the upstream DirectX 9
 backend. Normal startup through the native loader is retained.
 
 The main menu follows the revised placement: navigation in the left-middle and
 the complete PROJECT CAINE artwork centered across the background. Native menu
-availability determines New Game, Continue, Reload, Save, Load, Main Menu and Quit;
+availability determines New Game, Reload, Save, Load, Main Menu and Quit;
 CAINE adds Mods and Credits and presents Options as Settings. Escape resumes a
 paused game or returns from a CAINE page. Stock transitions and confirmation
 dialogs retain input whenever the native main menu reports itself busy.
 Navigation starts at 14.5% of screen width and centers around 44% of screen
 height, with vertical bounds for smaller resolutions and longer pause menus.
+Continue is the first main-menu entry and loads the newest recognizable native
+save in the active profile. It is disabled when none exists. The cached listing
+refreshes once per second and is revalidated when clicked, checks the `JSAV`
+header, rejects redirected/empty files and unsafe command tokens, and never
+falls back to another profile's saves. Mod readiness gating also applies.
+Quit from the main menu exits directly. Pause-menu quit confirmation is a
+compact centered dialog with side-by-side Quit and Cancel buttons.
 
 The modern settings pages cover Audio, Mouse, Keyboard, Gameplay, Video and
 Visual options. Ordinary settings are staged until Apply; Discard and leaving
@@ -57,10 +64,23 @@ An unsupported engine retains its native options and save/load dialogs.
 
 The supported shader hook remains at RVA 0x1b2fc, immediately before EndScene
 in SwapBuffers. Rendering requires the native menu's visibility check and a
-same-thread frame marker. Outside the opening cinematic, gameplay/loading frames with no menu paint do
-not draw or capture CAINE input. The passive intro skip prompt shares this same
+same-thread frame marker. During gameplay, an active mod-owned conversation may
+render and capture input without native menu paint. Other gameplay/loading frames
+do not draw or capture CAINE input. The passive intro skip prompt shares this same
 presentation hook; see INTRO_SKIP.md. It owns no menu widgets or mouse cursor. GUI actions run on subsequent native menu paint,
 not inside DirectX rendering. Network requests use the mod's asynchronous worker.
+
+Conversation overlays use an adaptive compact panel, a scrolling history/choice
+area and a pinned reply composer. Long responses remain scrollable and wrapped.
+Reply input receives focus on opening or becoming available. A software cursor
+is drawn only for gameplay overlays; main and pause menus keep native cursor
+ownership. Window message capture is supplemented by six exact-profile native
+CInput hooks for activation/deactivation, mouse polling, camera movement,
+recentering and buttons. Native activation is suppressed while capture is held.
+Closing, losing focus, native pause/deactivation, and an expired 500 ms frame
+lease release ownership. The native activation routine restores the previous
+mouse mode only when the game is foreground. The character sheet and other
+specialized native panels retain their own input behavior.
 
 The upstream backend restores render state. Default-pool font and geometry
 buffers are released after each visible frame so native device Reset paths can
@@ -84,9 +104,11 @@ Original Paint retains native lifecycle/audio and dialog handling. The CAINE
 background is opaque so the stock pause artwork cannot bleed through it.
 
 Startup skips default on independently with [Startup] SkipVideos=1. An
-engine-hash/byte-guarded cdecl playback hook at engine RVA 0xfbd10 bypasses only
-the four hardcoded Activision, White Wolf, NVIDIA and Troika logo paths. Other
-videos still call the original helper. No media files or launch arguments change.
+engine-hash/byte-guarded hook at engine RVA 0xfb524 bypasses the exact four-call
+Activision, White Wolf, NVIDIA and Troika startup block, landing at 0xfb55b after
+its stack cleanup. The entire block and filenames are validated. The general
+video playback entry is left untouched, allowing installed playback patches and
+story videos to retain their behavior. No media files or launch arguments change.
 Set SkipVideos=0 and restart to retain startup logos. Initialization attempts the
 hook as soon as engine.dll is available on CAINE's worker; live startup timing
 still needs acceptance with the player's launcher.
@@ -97,7 +119,11 @@ Native renderer tests cover PNG output, state restoration, device Reset and
 rerender, main-menu action routing, Unicode editing and masked field submission.
 The actual capture popup is exercised for opening-key isolation, repeat rejection,
 fresh keys, Escape, focus loss and wheel input. A mapped installed engine test
-executes its playback entry through the production detour for all four logo paths.
+executes the real startup block through the production detour repeatedly, with
+an independently patched playback entry, to check coexistence and stack ABI.
+The mapped installed client test executes production CInput hooks and original
+activation/deactivation routines, verifying polling suppression, cleared deltas,
+restoration, focus loss, native pause and lease expiry without a game world.
 Game-menu tests use a synthetic engine adapter and test staging, numeric bounds,
 inversion, video dispatch, bindings, active save-folder selection, confirmations,
 command validation and effective installed-resource reading. These tests do not

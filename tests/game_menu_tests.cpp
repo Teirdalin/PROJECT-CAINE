@@ -42,6 +42,18 @@ int main() {
         backend.bindings=[&] { return bindings; };
         backend.keyNames=[] { return std::vector<std::string>{"MOUSE1","SPACE","F","MWHEELUP","ESCAPE"}; };
         caine::GameMenus menus(backend,root,active);caine::MenuView view;
+        Check(!menus.ContinueLatest() && commands.empty(),"Continue must reject an unreadable save header");
+        Write(root/"Vampire/save/other-profile.sav","JSAVanother save");
+        Write(active/"save/Older.sav","JSAVolder save");Write(active/"save/Latest.SAV","JSAVlatest save");
+        Write(active/"save/empty.sav","");Write(active/"save/inject;quit.sav","JSAVinvalid name");
+        const auto time=std::filesystem::file_time_type::clock::now();
+        std::filesystem::last_write_time(active/"save/Older.sav",time-std::chrono::hours(1));
+        std::filesystem::last_write_time(active/"save/Latest.SAV",time);
+        Check(menus.ContinueLatest() && commands.back()=="load Latest\n","Continue selects latest native save from active profile");commands.clear();
+        std::filesystem::remove(active/"save/Latest.SAV");
+        Check(menus.ContinueLatest() && commands.back()=="load Older\n","Continue must revalidate deleted cached save");commands.clear();
+        std::filesystem::remove(active/"save/Older.sav");std::filesystem::remove(active/"save/empty.sav");std::filesystem::remove(active/"save/inject;quit.sav");
+        Check(!menus.ContinueLatest() && commands.empty(),"Continue must never load a different game profile");
         auto build=[&] { view={};menus.Build(view); };
         auto action=[&](const std::string& label,const std::string& text="",double number=0) { return menus.Action(Find(view,label),text,number); };
         menus.Open(caine::GameMenuPage::Settings);build();action("Sound effects volume","",-100);Check(commands.empty(),"settings committed before Apply");build();action("Apply settings");
