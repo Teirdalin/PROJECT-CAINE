@@ -9,18 +9,16 @@
 #include <caine/intro_skip.hpp>
 #include <caine/startup_videos.hpp>
 #include <caine/update.hpp>
+#include <caine/logging.hpp>
 #include <shellapi.h>
 #include <array>
-#include <fstream>
 #include <set>
 #include <sstream>
-#include <mutex>
 
 namespace {
 HMODULE self{};
 volatile LONG status = 0; // 0 dormant, 1 initializing, 2 observing, 3 config-disabled, -1 failed
 std::filesystem::path logFile;
-std::mutex logMutex;
 
 std::wstring Environment(const wchar_t* name) {
     const auto count = GetEnvironmentVariableW(name, nullptr, 0);
@@ -31,17 +29,7 @@ std::wstring Environment(const wchar_t* name) {
     value.resize(written);
     return value;
 }
-void Log(const std::string& message) {
-    caine::CrashBreadcrumb(message.c_str());
-    std::lock_guard<std::mutex> lock(logMutex);
-    SYSTEMTIME now{}; GetLocalTime(&now);
-    char timestamp[64]{};
-    sprintf_s(timestamp, "%04u-%02u-%02u %02u:%02u:%02u", now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond);
-    std::ofstream output(logFile, std::ios::app);
-    if (!output) throw std::runtime_error("cannot write CAINE log");
-    output << timestamp << " thread=" << GetCurrentThreadId() << " " << message << '\n';
-    OutputDebugStringA(("CAINE: " + message + "\n").c_str());
-}
+void Log(const std::string& message) noexcept { caine::WriteLog(message); }
 DWORD WINAPI Bootstrap(void*) {
     InterlockedExchange(&status, 1);
     try {
@@ -64,8 +52,9 @@ DWORD WINAPI Bootstrap(void*) {
             if (local.empty()) throw std::runtime_error("LOCALAPPDATA is unavailable");
             logRoot = (std::filesystem::path(local) / L"PROJECT CAINE" / L"Bloodlines" / L"logs").wstring();
         }
-        std::filesystem::create_directories(logRoot);
         logFile = std::filesystem::path(logRoot) / (L"CAINE-" + std::to_wstring(GetCurrentProcessId()) + L".log");
+        caine::OpenDebugLog(logRoot,GetPrivateProfileIntW(L"Logging",L"Verbose",1,config.c_str())!=0,caine::CrashBreadcrumb);
+        Log("CAINE_LOG_START: current=CAINE.log session=CAINE-"+std::to_string(GetCurrentProcessId())+".log; previous contents cleared; UTF-8 UTC timestamps, sequence, uptime and thread IDs");
         if (GetPrivateProfileIntW(L"Crash", L"Enabled", 1, config.c_str())) {
             const auto helper = config.parent_path() / L"CrashReporter.exe";
             const auto reports = Environment(L"CAINE_LOG_DIR").empty() ? std::filesystem::path(logRoot).parent_path() / L"crashes" : std::filesystem::path(logRoot) / L"crashes";
@@ -73,7 +62,7 @@ DWORD WINAPI Bootstrap(void*) {
                 Log("CAINE_CRASH_REPORTER_READY: external x86 reporter; exception context, stacks, modules, recent activity and minidumps; first-chance candidates preserve native handling");
             else Log("CAINE_CRASH_REPORTER_UNAVAILABLE: helper missing or initialization failed; native crash handling retained");
         }
-        Log("PROJECT CAINE 0.3.12 x86 starting; native loader route; mod API v1");
+        Log("PROJECT CAINE 0.3.13 x86 starting; native loader route; mod API v1");
         caine::InitializeUpdates(exe.parent_path(),config,Log);
         Log("Executable SHA256=" + caine::Sha256(exe));
         const bool skipStartup=GetPrivateProfileIntW(L"Startup",L"SkipVideos",1,config.c_str())!=0;
@@ -89,9 +78,12 @@ DWORD WINAPI Bootstrap(void*) {
         const bool modern=GetPrivateProfileIntW(L"Menu",L"Modern",1,config.c_str())!=0;
         const bool intro=GetPrivateProfileIntW(L"Intro",L"Enabled",1,config.c_str())!=0;
         caine::ConfigureMenuRenderer(modern);
+        Log("CAINE_RUNTIME_OPTIONS: modern="+std::to_string(modern)+" intro="+std::to_string(intro)+" skip_startup_videos="+std::to_string(skipStartup));
         const auto started = GetTickCount64();
+        auto lastHeartbeat=started;uint64_t polls{};
         bool warned = false;
         for (;;) {
+            ++polls;
             if (skipStartup && !startupAttempted && GetModuleHandleW(L"engine.dll")) {
                 startupAttempted=true;caine::InstallStartupVideoSkip(GetModuleHandleW(L"engine.dll"),Log);
             }
@@ -140,6 +132,11 @@ DWORD WINAPI Bootstrap(void*) {
                 Log("Engine not observed after 60 seconds; continuing observation without applying patches");
                 warned = true;
             }
+            if (GetTickCount64()-lastHeartbeat>=5000) {
+                lastHeartbeat=GetTickCount64();const auto catalog=caine::ModCatalog();size_t active{};
+                for (const auto& mod:catalog) if (mod.active) ++active;
+                caine::TraceLog("CAINE_RUNTIME_HEARTBEAT: polls="+std::to_string(polls)+" modules="+std::to_string(observed.size())+" mods="+std::to_string(active)+"/"+std::to_string(catalog.size())+" status="+std::to_string(InterlockedCompareExchange(&status,0,0)));
+            }
             Sleep(250);
         }
     } catch (const std::exception& error) {
@@ -148,6 +145,7 @@ DWORD WINAPI Bootstrap(void*) {
         if (!logFile.empty()) { try { Log(std::string("CAINE_FAILED: ") + error.what()); } catch (...) {} }
     } catch (...) {
         InterlockedExchange(&status, -1);
+        Log("CAINE_FAILED: unknown runtime exception");
     }
     return 0;
 }

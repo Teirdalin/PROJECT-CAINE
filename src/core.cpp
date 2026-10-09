@@ -1,4 +1,5 @@
 #include <caine/core.hpp>
+#include <caine/logging.hpp>
 #include <MinHook.h>
 #include <bcrypt.h>
 #include <psapi.h>
@@ -155,6 +156,12 @@ bool Hooks::Install(const Module& module, const HookSpec& spec, void* detour, vo
 }
 bool Hooks::InstallBatch(const Module& module, const std::vector<HookRequest>& requests, std::string& error) {
     error.clear();
+    std::string checking;
+    struct Audit {
+        std::string& error;std::string& checking;
+        ~Audit() noexcept { try { if (!error.empty()) TraceLog("CAINE_HOOK_REJECTED: id="+checking+" reason="+error); } catch (...) {} }
+    } audit{error,checking};
+    TraceLog("CAINE_HOOK_BATCH_BEGIN: count="+std::to_string(requests.size())+" module_sha256="+module.sha256);
     if (requests.empty()) { error = "empty hook batch"; return false; }
     std::vector<Target> staged;
     // Finish all potentially throwing allocations/validation before patching or staging hooks.
@@ -162,6 +169,8 @@ bool Hooks::InstallBatch(const Module& module, const std::vector<HookRequest>& r
     targets_.reserve(targets_.size() + requests.size());
     for (const auto& request : requests) {
     const auto& spec = request.spec;
+    checking=spec.id;
+    TraceLog("CAINE_HOOK_VALIDATE: id="+spec.id+" rva="+std::to_string(spec.rva)+" expected_bytes="+std::to_string(spec.expected.size()));
     auto detour = request.detour;
     auto original = request.original;
     if (!original) { error = "original trampoline output is required"; return false; }
@@ -202,7 +211,7 @@ bool Hooks::InstallBatch(const Module& module, const std::vector<HookRequest>& r
         error = MH_StatusToString(result);
         return false;
     }
-    for (auto& entry : staged) targets_.push_back(std::move(entry));
+    for (auto& entry : staged) { TraceLog("CAINE_HOOK_ENABLED: id="+entry.id);targets_.push_back(std::move(entry)); }
     return true;
 }
 bool Hooks::RemoveAll(std::string& error) {
@@ -214,6 +223,7 @@ bool Hooks::RemoveAll(std::string& error) {
         status = MH_RemoveHook(target);
         if (status != MH_OK) { error = MH_StatusToString(status); return false; }
         targets_.pop_back();
+        TraceLog("CAINE_HOOK_REMOVED: remaining="+std::to_string(targets_.size()));
     }
     return true;
 }

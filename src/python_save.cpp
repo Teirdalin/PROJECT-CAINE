@@ -1,5 +1,6 @@
 #include <caine/python_save.hpp>
 #include <caine/core.hpp>
+#include <caine/logging.hpp>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -20,9 +21,10 @@ template<class T> T Export(HMODULE module,const char* name) {
 PythonObject* __cdecl ReadLine(PythonSaveFile* file,PythonObject*) noexcept {
     try {
         const auto line=ReadPythonSaveLine(file);
+        TraceLog("CAINE_PYTHON_SAVE_LINE_READ: bytes="+std::to_string(line.size()));
         return makeString(line.data(),static_cast<int>(line.size()));
-    } catch (const std::exception& error) { setError(*ioError,error.what()); }
-    catch (...) { setError(*ioError,"Native Python save line could not be read"); }
+    } catch (const std::exception& error) { WriteLog(std::string("CAINE_PYTHON_SAVE_READ_FAILED: ")+error.what());setError(*ioError,error.what()); }
+    catch (...) { WriteLog("CAINE_PYTHON_SAVE_READ_FAILED: unknown exception");setError(*ioError,"Native Python save line could not be read"); }
     return nullptr;
 }
 }

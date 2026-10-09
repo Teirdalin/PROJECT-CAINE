@@ -39,7 +39,7 @@ std::string Address(DWORD64 address, const std::vector<Module>& modules) {
 }
 void Report(HANDLE process, caine::crash::Shared& data, HMODULE dbghelp, const std::filesystem::path& stem) {
     std::ofstream out(stem.wstring() + L".txt", std::ios::trunc);
-    out << "PROJECT CAINE 0.3.12 x86 exception report\n"
+    out << "PROJECT CAINE 0.3.13 x86 exception report\n"
         << "Stage: FIRST_CHANCE_CANDIDATE (may be handled by the game; not proof of a fatal crash)\n"
         << "PID=" << data.pid << " faulting_thread=" << data.thread << " sequence=" << data.sequence
         << " uptime_ms=" << data.captured - data.started << "\nRuntime log: " << Utf8(data.logFile) << '\n';

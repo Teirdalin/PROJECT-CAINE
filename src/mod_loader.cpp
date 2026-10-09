@@ -4,6 +4,7 @@
 #include <caine/native_bridge.hpp>
 #include <caine/python_bridge.hpp>
 #include <caine/serialization.hpp>
+#include <caine/logging.hpp>
 #include <algorithm>
 #include <map>
 #include <memory>
@@ -39,6 +40,7 @@ const caine::Module& Inspect(Mod& mod, HMODULE module) {
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
                            reinterpret_cast<LPCWSTR>(module), &pinned))
         throw std::runtime_error("Cannot pin inspected module");
+    caine::TraceLog("CAINE_MOD_MODULE_INSPECT: mod="+mod.id);
     return mod.modules.emplace(module, caine::Module::Inspect(module)).first->second;
 }
 int __cdecl InspectModule(void* context, HMODULE module, CaineModuleV1* output) noexcept {
@@ -94,7 +96,7 @@ uint32_t __cdecl Serialize(void* context,const char* input,uint32_t bytes,char* 
         const auto needed=static_cast<uint32_t>(value.size()+1);
         if (output && capacity>=needed) memcpy(output,value.c_str(),needed);
         return needed;
-    } catch (const std::exception& error) { Log(context,error.what());return 0; }
+    } catch (const std::exception&) { Log(context,"CAINE_SERIALIZATION_REJECTED: invalid owned data; input content omitted");return 0; }
       catch (...) { return 0; }
 }
 int __cdecl TypeInfo(void*,uint32_t index,CaineTypeV1* output) noexcept {
@@ -119,7 +121,8 @@ void LoadMods(const std::filesystem::path& directory, const std::filesystem::pat
               const std::function<void(const std::string&)>& log) {
     std::lock_guard<std::recursive_mutex> lock(catalogMutex);
     logger = log; controlThread = GetCurrentThreadId();
-    if (!std::filesystem::exists(directory)) return;
+    TraceLog("CAINE_MOD_DISCOVERY_BEGIN");
+    if (!std::filesystem::exists(directory)) { TraceLog("CAINE_MOD_DISCOVERY_END: no mods directory");return; }
     if (Redirected(directory) || !std::filesystem::is_directory(directory))
         throw std::runtime_error("Invalid mod directory");
     std::vector<std::filesystem::path> folders;
@@ -127,6 +130,7 @@ void LoadMods(const std::filesystem::path& directory, const std::filesystem::pat
         if (entry.is_directory() && !Redirected(entry.path())) folders.push_back(entry.path());
     std::sort(folders.begin(), folders.end());
     for (const auto& folder : folders) {
+        TraceLog("CAINE_MOD_DISCOVERED: folder="+folder.filename().u8string());
         auto item = std::make_unique<Mod>();
         item->id = folder.filename().string();
         item->info.id = item->id; item->info.name = item->id; item->info.directory = folder;
@@ -151,6 +155,7 @@ void LoadMods(const std::filesystem::path& directory, const std::filesystem::pat
             const auto library = LoadLibraryExW(mod.info.binary.c_str(), nullptr,
                 LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
             if (!library) throw std::runtime_error("DLL load failed");
+            TraceLog("CAINE_MOD_LIBRARY_LOADED: id="+id);
             mod.directory = folder.wstring(); mod.game = game.wstring(); mod.config = mod.info.config.wstring();
             auto query = reinterpret_cast<CaineModQuery>(GetProcAddress(library, "CaineMod_Query"));
             if (!query) throw std::runtime_error("Missing CaineMod_Query");
@@ -162,7 +167,9 @@ void LoadMods(const std::filesystem::path& directory, const std::filesystem::pat
                 throw std::runtime_error("Incompatible mod descriptor or framework version");
             mod.host = {sizeof(CaineHostV1), CAINE_MOD_ABI_V1, CAINE_FRAMEWORK_VERSION, &mod,
                         mod.game.c_str(), mod.directory.c_str(), mod.config.c_str(), Log, InspectModule, InstallHooks,ReadDialogue,ClaimDialogue,QueuePick,ReadScalar,Serialize,TypeInfo};
+            TraceLog("CAINE_MOD_START_ENTER: id="+id);
             if (!desc->start(&mod.host)) throw std::runtime_error("Mod start declined");
+            TraceLog("CAINE_MOD_START_RETURN: id="+id+" configure="+std::to_string(desc->configure!=nullptr)+" tick="+std::to_string(desc->tick!=nullptr)+" game_ui="+std::to_string(desc->size>=sizeof(CaineModV1) && desc->gameUI!=nullptr));
             mod.active = true; mod.info.active = true; mod.info.state = "Loaded";
             log("CAINE_MOD_LOADED: " + id + " " + desc->version);
         } catch (const std::exception& failure) {
@@ -170,6 +177,7 @@ void LoadMods(const std::filesystem::path& directory, const std::filesystem::pat
             log("CAINE_MOD_REJECTED: " + id + " " + failure.what());
         } catch (...) { mod.info.state = "Unavailable: callback exception"; log("CAINE_MOD_REJECTED: " + id + " callback exception"); }
     }
+    TraceLog("CAINE_MOD_DISCOVERY_END: entries="+std::to_string(mods.size()));
 }
 void TickMods() {
     // The catalog is immutable after startup. Never hold its UI lock across a mod's
@@ -206,12 +214,15 @@ bool SetModEnabled(const std::string& id, bool enabled, std::string& error) {
             error = "Cannot write configuration"; return false;
         }
         mod->info.enabled = enabled;
+        TraceLog("CAINE_MOD_ENABLED_SAVED: id="+id+" enabled="+std::to_string(enabled)+" restart_required=1");
         error.clear(); return true;
     }
     error = "Mod was not found"; return false;
 }
 bool ModMenu(const std::string& id, const CaineMenuV1* menu, uint32_t event, uint32_t value) {
     std::lock_guard<std::recursive_mutex> lock(catalogMutex);
+    if (event!=CAINE_MENU_BUILD && event!=CAINE_MENU_WANTS_TEXT)
+        TraceLog("CAINE_MOD_CONFIG_EVENT: id="+id+" event="+std::to_string(event)+(event==CAINE_MENU_CHAR?" character=omitted":" control="+std::to_string(value)));
     for (auto& mod : mods) if (mod->id == id && mod->active && mod->descriptor->configure) {
         try { return mod->descriptor->configure(menu, event, value) != 0; }
         catch (...) { logger("CAINE_MOD_MENU_FAILED: " + id); return false; }
@@ -233,14 +244,21 @@ void PulseModMenus() {
 }
 std::string ActiveGameUI() {
     std::lock_guard<std::recursive_mutex> lock(catalogMutex);
+    static std::string previous;
     for (auto& mod:mods) if (mod->active && mod->descriptor->size>=sizeof(CaineModV1) && mod->descriptor->gameUI) {
-        try { if (mod->descriptor->gameUI(nullptr,CAINE_GAMEUI_POLL,0)) return mod->id; }
+        try { if (mod->descriptor->gameUI(nullptr,CAINE_GAMEUI_POLL,0)) {
+            if (previous!=mod->id) { TraceLog("CAINE_GAME_UI_OWNER: id="+mod->id);previous=mod->id; }
+            return mod->id;
+        } }
         catch (...) { logger("CAINE_MOD_GAME_UI_FAILED: "+mod->id); }
     }
+    if (!previous.empty()) { TraceLog("CAINE_GAME_UI_OWNER: released id="+previous);previous.clear(); }
     return {};
 }
 bool ModGameUI(const std::string& id,const CaineMenuV1* menu,uint32_t event,uint32_t value) {
     std::lock_guard<std::recursive_mutex> lock(catalogMutex);
+    if (event!=CAINE_MENU_BUILD && event!=CAINE_GAMEUI_POLL)
+        TraceLog("CAINE_MOD_GAME_UI_EVENT: id="+id+" event="+std::to_string(event)+" control="+std::to_string(value));
     for (auto& mod:mods) if (mod->id==id && mod->active && mod->descriptor->size>=sizeof(CaineModV1) && mod->descriptor->gameUI) {
         try { return mod->descriptor->gameUI(menu,event,value)!=0; }
         catch (...) { logger("CAINE_MOD_GAME_UI_FAILED: "+id);return false; }

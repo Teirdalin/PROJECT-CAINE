@@ -12,6 +12,11 @@ int wmain(int argc, wchar_t** argv) {
     const auto logs = std::filesystem::temp_directory_path() / (L"caine-native-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(std::chrono::steady_clock::now().time_since_epoch().count()));
     SetEnvironmentVariableW(L"CAINE_DISABLED", active ? nullptr : L"1");
     SetEnvironmentVariableW(L"CAINE_LOG_DIR", logs.c_str());
+    if (active && !configDisabled) {
+        std::filesystem::create_directories(logs);
+        std::ofstream(logs/L"CAINE.log")<<"PREVIOUS_LAUNCH_SENTINEL\n";
+        std::ofstream(logs/(L"CAINE-"+std::to_wstring(GetCurrentProcessId())+L".log"))<<"REUSED_PID_SENTINEL\n";
+    }
     if (!LoadLibraryW(argv[2])) return 2;
     std::filesystem::path pluginPath = argv[1];
     if (configDisabled || crashDisabled) {
@@ -45,11 +50,13 @@ int wmain(int argc, wchar_t** argv) {
     const std::string content((std::istreambuf_iterator<char>(input)), {});
     input.close();
     if (content.find("CAINE_READY") == std::string::npos || content.find("Module=engine.dll") == std::string::npos) return 7;
+    const auto current=logs/L"CAINE.log";
+    std::ifstream currentInput(current);const std::string currentContent((std::istreambuf_iterator<char>(currentInput)),{});
+    if (currentContent.find("CAINE_READY")==std::string::npos || currentContent.find("PREVIOUS_LAUNCH_SENTINEL")!=std::string::npos || content.find("REUSED_PID_SENTINEL")!=std::string::npos || content.find("CAINE_LOG_START")==std::string::npos) return 10;
     if ((content.find("CAINE_CRASH_REPORTER_READY") != std::string::npos) == crashDisabled) return 9;
     std::cout << "CAINE_NATIVE_ACTIVE_OK: automatic loader bootstrap, module observation, ready status, log evidence\n";
     // Plugin is pinned for process lifetime. No unsafe FreeLibrary while its worker runs.
-    std::filesystem::remove(log);
-    std::filesystem::remove(logs / L"crashes");
-    std::filesystem::remove(logs);
+    // Runtime logging owns open handles until process exit. Keep this isolated
+    // fixture's diagnostics instead of removing files under its worker thread.
     return 0;
 }

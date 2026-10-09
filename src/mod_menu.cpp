@@ -5,6 +5,7 @@
 #include <caine/intro_skip.hpp>
 #include <caine/native_menu_state.hpp>
 #include <caine/native_bridge.hpp>
+#include <caine/logging.hpp>
 #include <shellapi.h>
 #include <algorithm>
 #include <array>
@@ -59,6 +60,8 @@ std::deque<std::function<void()>> overlayActions;
 int confirmAction{-1};
 bool lastBusy{true};
 bool updateOpen{};
+ULONGLONG lastRenderHeartbeat{};
+uint64_t renderFrames{};
 // The supported native client treats a pending menu action as "busy" too.
 // That action needs an immediate zero-alpha Paint to complete its lifecycle.
 int PendingAction(void* self) { return caine::NativeMenuState::Pending(self); }
@@ -168,6 +171,9 @@ void BuildRows() {
 }
 LRESULT CALLBACK WindowProcedure(HWND window, UINT msg, WPARAM wp, LPARAM lp) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
+    if (msg==WM_ACTIVATEAPP) caine::TraceLog("CAINE_WINDOW_FOCUS: active="+std::to_string(wp!=0));
+    else if (msg==WM_SIZE) caine::TraceLog("CAINE_WINDOW_SIZE: width="+std::to_string(LOWORD(lp))+" height="+std::to_string(HIWORD(lp))+" mode="+std::to_string(wp));
+    else if (msg==WM_CLOSE || msg==WM_DESTROY) caine::TraceLog("CAINE_WINDOW_EXIT: message="+std::to_string(msg));
     if (caine::CaptureIntroEscape(window,msg,wp)) return 0;
     const bool modal = modernReady && (modernShown || overlayShown) && GetTickCount64()-lastModernFrame<500;
     if (modal && renderer) renderer->Input(msg, wp, lp);
@@ -201,7 +207,9 @@ LRESULT CALLBACK WindowProcedure(HWND window, UINT msg, WPARAM wp, LPARAM lp) {
 }
 BOOL CALLBACK FindGameWindow(HWND window, LPARAM) {
     DWORD pid{}; GetWindowThreadProcessId(window, &pid);
-    if (pid == GetCurrentProcessId() && IsWindowVisible(window) && !GetWindow(window, GW_OWNER)) { gameWindow = window; return FALSE; }
+    if (pid == GetCurrentProcessId() && IsWindowVisible(window) && !GetWindow(window, GW_OWNER)) {
+        gameWindow = window;caine::TraceLog("CAINE_WINDOW_ATTACHED: thread="+std::to_string(GetWindowThreadProcessId(window,nullptr)));return FALSE;
+    }
     return TRUE;
 }
 const int* __fastcall MenuItems(void* self, void*, int* count) {
@@ -320,7 +328,7 @@ void __fastcall MenuPaint(void* self, void*) {
             EnumWindows(FindGameWindow, 0);
             if (gameWindow) previousProcedure = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(gameWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(WindowProcedure)));
         }
-    } catch (...) { message = "Mod configuration operation failed"; }
+    } catch (...) { message = "Mod configuration operation failed";caine::TraceLog("CAINE_MENU_CALLBACK_FAILED: page="+std::to_string(static_cast<int>(page))); }
     // Exact supported client profile: native constructor and Paint use these
     // float alpha fields. Keep lifecycle/audio/native dialogs in original Paint,
     // but complete the visual fade immediately while CAINE owns the menu.
@@ -345,6 +353,7 @@ bool PaintGameUI(IDirect3DDevice9* device) {
     while (!overlayActions.empty()) { auto action=std::move(overlayActions.front());overlayActions.pop_front();action(); }
     const auto owner=ActiveGameUI();
     if (owner.empty() || !gameWindow) {
+        if (overlayShown) TraceLog("CAINE_OVERLAY_CLOSED: mod="+overlayMod);
         if (overlayShown && renderer) renderer->ClearInput();
         overlayShown=false;overlayMod.clear();return false;
     }
@@ -359,8 +368,10 @@ bool PaintGameUI(IDirect3DDevice9* device) {
     if (!ModGameUI(owner,&api,CAINE_MENU_BUILD,0)) return false;
     std::vector<MenuAction> events;
     if (!renderer->Render(gameWindow,view,events)) return false;
+    if (!overlayShown || overlayMod!=owner) TraceLog("CAINE_OVERLAY_OPENED: mod="+owner+" controls="+std::to_string(view.controls.size()));
     modernShown=false;overlayShown=true;overlayMod=owner;lastModernFrame=GetTickCount64();
     for (auto& event:events) {
+        TraceLog("CAINE_OVERLAY_ACTION: mod="+owner+" kind="+std::to_string(static_cast<int>(event.kind))+" control="+std::to_string(event.value)+" text_bytes="+std::to_string(event.text.size()));
         if (event.kind==MenuActionKind::Control) overlayActions.push_back([owner,event] {
             const CaineValueV1 value{sizeof(CaineValueV1),event.text.c_str(),event.number};
             const CaineMenuV1 api{sizeof(CaineMenuV1),nullptr,nullptr,nullptr,&value};
@@ -378,6 +389,11 @@ void ConfigureMenuRenderer(bool modern) {
 void PaintModernMenu(IDirect3DDevice9* device) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
     if (!installed.load()) return;
+    ++renderFrames;
+    if (GetTickCount64()-lastRenderHeartbeat>=5000) {
+        lastRenderHeartbeat=GetTickCount64();
+        TraceLog("CAINE_RENDER_HEARTBEAT: frames="+std::to_string(renderFrames)+" native_menu="+std::to_string(menuPainted)+" modern="+std::to_string(modernShown)+" overlay="+std::to_string(overlayShown)+" page="+std::to_string(static_cast<int>(page))+" window_thread="+std::to_string(gameWindow?GetWindowThreadProcessId(gameWindow,nullptr):0));
+    }
     if (!gameWindow) {
         EnumWindows(FindGameWindow,0);
         if (gameWindow) previousProcedure=reinterpret_cast<WNDPROC>(SetWindowLongPtrW(gameWindow,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(WindowProcedure)));
@@ -427,6 +443,7 @@ void PaintModernMenu(IDirect3DDevice9* device) {
     if (!renderer->Render(gameWindow, view, events)) { modernShown=false;return; }
     modernShown=true;lastModernFrame=GetTickCount64();
     for (auto& event : events) {
+        TraceLog("CAINE_MENU_ACTION: page="+std::to_string(static_cast<int>(page))+" kind="+std::to_string(static_cast<int>(event.kind))+" control="+std::to_string(event.value)+" text_bytes="+std::to_string(event.text.size()));
         // Capture row callbacks now; their indices can change on the next build.
         if (event.kind == MenuActionKind::Row) {
             if (event.value < rows.size() && rows[event.value].action) actions.push_back(rows[event.value].action);

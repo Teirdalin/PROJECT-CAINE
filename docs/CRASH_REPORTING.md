@@ -11,6 +11,11 @@ Each report has a UTC timestamp, game PID and sequence number, with matching
 investigating a crash. Dumps contain process memory and may include private
 data; they remain local until you choose to share them.
 
+Since 0.3.13, `logs/CAINE.log` is a fresh current-run log on every normal startup.
+The PID log is also truncated at startup, including when a PID is reused. Detailed
+event traces are enabled by default; see [Debug logging](DEBUG_LOGGING.md). The
+observer's exception path remains allocation-free and does not acquire the log lock.
+
 The text report records the exception code, access kind and target, original x86
 registers, faulting thread, module-relative fault address, best-effort stack
 frames, actual loaded-module bases and paths, bounded raw stack bytes, and the

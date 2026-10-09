@@ -1,5 +1,6 @@
 #include <caine/core.hpp>
 #include <caine/menu_view.hpp>
+#include <caine/logging.hpp>
 #include <atomic>
 
 namespace {
@@ -14,7 +15,7 @@ void __cdecl Draw(void* shader) noexcept {
     try {
         auto device = *reinterpret_cast<IDirect3DDevice9**>(static_cast<uint8_t*>(shader) + 0x1c);
         if (device) caine::PaintModernMenu(device);
-    } catch (...) { OutputDebugStringA("CAINE menu render failed\n"); }
+    } catch (...) { caine::WriteLog("CAINE_MENU_RENDER_FAILED: exception at guarded render boundary"); }
 }
 __declspec(naked) void BeforeEndScene() {
     __asm {

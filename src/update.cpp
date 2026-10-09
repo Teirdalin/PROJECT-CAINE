@@ -1,4 +1,5 @@
 #include <caine/update.hpp>
+#include <caine/logging.hpp>
 #include <json.hpp>
 #include <winhttp.h>
 #include <objbase.h>
@@ -20,6 +21,9 @@ HANDLE wake{};
 bool downloadRequested{}, restartClaimed{};
 void Status(UpdatePhase phase,std::string message,float progress=0) {
     std::lock_guard<std::mutex> lock(mutex);
+    const auto bucket=static_cast<int>(progress*10);
+    if (snapshot.phase!=phase || static_cast<int>(snapshot.progress*10)!=bucket)
+        TraceLog("CAINE_UPDATE_PROGRESS: phase="+std::to_string(static_cast<int>(phase))+" percent="+std::to_string(bucket*10));
     snapshot.phase=phase;snapshot.message=std::move(message);snapshot.progress=progress;
 }
 void Log(const std::string& line) { try{if(logger)logger(line);}catch(...){} }
@@ -30,7 +34,7 @@ std::string ReadJson(const std::filesystem::path& path) {
     return std::string(std::istreambuf_iterator<char>(input),{});
 }
 std::string Fetch(std::string url,bool api,const std::filesystem::path& output={},uint64_t expected=0) {
-    Internet session{WinHttpOpen(L"PROJECT-CAINE/0.3.9",WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,nullptr,nullptr,0)};
+    Internet session{WinHttpOpen(L"PROJECT-CAINE/0.3.13",WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,nullptr,nullptr,0)};
     if(!session.handle)throw std::runtime_error("Cannot initialize HTTPS update request");
     WinHttpSetTimeouts(session.handle,5000,5000,10000,15000);
     for(int hop=0;hop<6;++hop) {

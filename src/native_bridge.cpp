@@ -1,5 +1,6 @@
 #include <caine/native_bridge.hpp>
 #include <caine/native_types.hpp>
+#include <caine/logging.hpp>
 #include <algorithm>
 #include <atomic>
 #include <cstring>
@@ -45,8 +46,11 @@ std::optional<int> desiredFov;
 bool fovRead{};
 HWND gameWindow{};
 uint32_t playerHandle{UINT32_MAX};
-ULONGLONG lastUseDiagnostic{},lastFovCommand{};
+ULONGLONG lastFovCommand{};
 ULONGLONG nextPlayerScan{};
+bool inputObserved{},presenceObserved{},playerPresent{};
+uint32_t lastHeld{},lastPressed{},lastReleased{},observedPlayer{UINT32_MAX};
+int lastFov{};
 uint64_t nextToken{};
 bool Readable(const void* address,size_t count) {
     if (!address || !count) return false;
@@ -145,27 +149,28 @@ bool Visible() {
         if (Text(live.hud,H::Responses+i*2048,2048)!=live.rawResponses[i]) return false;
     return true;
 }
-void Invalidate(bool all=true) { live={};++nextToken;if (all) pendingUse={}; }
+void Invalidate(bool all=true,const char* reason="native state changed") {
+    if (live.copied.token || (all && pendingUse.captured)) caine::TraceLog("CAINE_DIALOGUE_INVALIDATED: token="+std::to_string(live.copied.token)+" pending_use="+std::to_string(pendingUse.captured!=0)+" reason="+reason);
+    live={};++nextToken;if (all) pendingUse={};
+}
 // PlayerUse has already selected and accepted this NPC. EDI is its base entity;
 // ESI is the player's component. We observe the press edge, never scripted Use.
 void __cdecl AcceptedUse(void* npc,void* player) noexcept {
     try {
         std::lock_guard<std::recursive_mutex> lock(mutex);
-        if (Readable(player,0x2094) && GetTickCount64()-lastUseDiagnostic>=1000) {
-            lastUseDiagnostic=GetTickCount64();
-            logger("CAINE_NPC_USE_OBSERVED: held="+std::to_string(Field<uint32_t>(player,0x2088))+" pressed="+std::to_string(Field<uint32_t>(player,0x208c))+" released="+std::to_string(Field<uint32_t>(player,0x2090)));
-        }
-        if (!Readable(player,0x2094) || !(Field<uint32_t>(player,0x208c)&0x20) ||
-            (live.copied.token && Current())) return;
+        if (!Readable(player,0x2094)) { caine::TraceLog("CAINE_NPC_USE_REJECTED: unreadable player component");return; }
+        caine::TraceLog("CAINE_NPC_USE_OBSERVED: held="+std::to_string(Field<uint32_t>(player,0x2088))+" pressed="+std::to_string(Field<uint32_t>(player,0x208c))+" released="+std::to_string(Field<uint32_t>(player,0x2090)));
+        if (!(Field<uint32_t>(player,0x208c)&0x20)) { caine::TraceLog("CAINE_NPC_USE_REJECTED: not a fresh use-key press");return; }
+        if (live.copied.token && Current()) { caine::TraceLog("CAINE_NPC_USE_REJECTED: conversation already current token="+std::to_string(live.copied.token));return; }
         const auto entity=LocalEntity();
         if (!entity || Field<void*>(entity,0xa8)!=player) { logger("CAINE_NPC_USE_REJECTED: accepted player is absent or ambiguous in the entity registry");return; }
         PendingUse next;auto& copy=next.copied;
         copy.npcHandle=HandleFor(npc);copy.playerHandle=HandleFor(entity);
-        if (copy.npcHandle==UINT32_MAX || copy.npcHandle==copy.playerHandle) return;
+        if (copy.npcHandle==UINT32_MAX || copy.npcHandle==copy.playerHandle) { caine::TraceLog("CAINE_NPC_USE_REJECTED: invalid or self NPC handle");return; }
         // This inspected helper only reads the two handles, then the NPC's source.
         const std::array<uint32_t,2> handles{copy.npcHandle,copy.playerHandle};
         const auto path=filename(const_cast<uint32_t*>(handles.data()));
-        if (!Readable(path,260)) return;
+        if (!Readable(path,260)) { caine::TraceLog("CAINE_NPC_USE_REJECTED: dialogue source unavailable");return; }
         const auto source=Utf8(Text(path,0,260));
         if (source.empty()) { logger("CAINE_NPC_USE_REJECTED: NPC has no dialogue identity");return; }
         copy.size=sizeof(copy);copy.line=-1;strcpy_s(copy.source,source.c_str());
@@ -187,11 +192,11 @@ __declspec(naked) void BeforeNPCInteraction() {
     }
 }
 void Capture(void* self,void* packet) {
-    Invalidate(false);
+    Invalidate(false,"native packet replaced");
     if (!Readable(self,0x2838) || !Readable(packet,0x2804)) return;
     const int count=Field<int>(self,D::Count);
     // Auto-end floats have no interactive player choices; preserve their native flow.
-    if (count<1 || count>4 || !Field<void*>(self,D::Data)) return;
+    if (count<1 || count>4 || !Field<void*>(self,D::Data)) { caine::TraceLog("CAINE_NATIVE_DIALOGUE_NOT_INTERACTIVE: responses="+std::to_string(count));return; }
     Live next;next.dialog=self;next.thread=GetCurrentThreadId();
     auto& copy=next.copied;copy.size=sizeof(copy);copy.responseCount=static_cast<uint32_t>(count);
     copy.npcHandle=Field<uint32_t>(self,D::Npc);copy.playerHandle=Field<uint32_t>(self,D::Player);
@@ -215,11 +220,11 @@ void __fastcall Packet(void* self,void*,void* packet) {
     catch (...) { std::lock_guard<std::recursive_mutex> lock(mutex);Invalidate();logger("CAINE_NATIVE_DIALOGUE_REJECTED: invalid native packet"); }
 }
 void __fastcall Release(void* self,void*) {
-    { std::lock_guard<std::recursive_mutex> lock(mutex);if (live.dialog==self) Invalidate(false); }
+    { std::lock_guard<std::recursive_mutex> lock(mutex);if (live.dialog==self) Invalidate(false,"native dialogue released"); }
     releaseOriginal(self);
 }
 void __fastcall Active(void* self,void*,bool enabled) {
-    { std::lock_guard<std::recursive_mutex> lock(mutex);if (!enabled && !live.ambient && live.hud==self) Invalidate(false); }
+    { std::lock_guard<std::recursive_mutex> lock(mutex);if (!enabled && !live.ambient && live.hud==self) Invalidate(false,"native HUD closed"); }
     activeOriginal(self,enabled);
 }
 void __fastcall Paint(void* self,void*) {
@@ -283,37 +288,51 @@ bool ClaimNativeDialogue(void* owner,uint64_t token,bool enabled) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
     if (!enabled) {
         if (live.owner && live.owner!=owner) return false;
-        if (live.ambient || pendingUse.captured) { Invalidate();return true; }
+        if (live.ambient || pendingUse.captured) { Invalidate(true,"mod release/load boundary");return true; }
+        if (live.owner) TraceLog("CAINE_DIALOGUE_OWNER_RELEASED: token="+std::to_string(live.copied.token));
         live.owner=nullptr;live.pick.reset();return true;
     }
-    if (!owner || !ready.load() || token!=live.copied.token || !Visible() || (live.owner && live.owner!=owner)) return false;
+    if (!owner || !ready.load() || token!=live.copied.token || !Visible() || (live.owner && live.owner!=owner)) { TraceLog("CAINE_DIALOGUE_CLAIM_REJECTED: requested="+std::to_string(token)+" current="+std::to_string(live.copied.token));return false; }
+    if (live.owner!=owner) TraceLog("CAINE_DIALOGUE_OWNER_CLAIMED: token="+std::to_string(token)+" ambient="+std::to_string(live.ambient));
     live.owner=owner;return true;
 }
 bool QueueNativeDialoguePick(void* owner,uint64_t token,int index) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
     if (!owner || owner!=live.owner || token!=live.copied.token || !Visible() || live.pick ||
-        (index!=-2 && (index<0 || index>=static_cast<int>(live.copied.responseCount)))) return false;
-    if (live.ambient) { if (index!=-2) return false;Invalidate();return true; }
+        (index!=-2 && (index<0 || index>=static_cast<int>(live.copied.responseCount)))) { TraceLog("CAINE_DIALOGUE_PICK_REJECTED: token="+std::to_string(token)+" index="+std::to_string(index));return false; }
+    if (live.ambient) { if (index!=-2) return false;Invalidate(true,"ambient conversation closed");return true; }
+    TraceLog("CAINE_DIALOGUE_PICK_QUEUED: token="+std::to_string(token)+" index="+std::to_string(index));
     live.pick=index;return true;
 }
-void InvalidateNativeDialogue() { std::lock_guard<std::recursive_mutex> lock(mutex);Invalidate(); }
+void InvalidateNativeDialogue() { std::lock_guard<std::recursive_mutex> lock(mutex);Invalidate(true,"explicit world/load boundary"); }
 void PulseNativeBridge(HWND window,const std::function<void(const std::string&)>& command) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
     if (!ready.load() || !window || GetWindowThreadProcessId(window,nullptr)!=GetCurrentThreadId()) return;
     gameWindow=window;
     if (!fovRead) NativeFieldOfView();
     const auto entity=LocalEntity();
-    if (!entity) { Invalidate();return; }
+    if (!presenceObserved || playerPresent!=(entity!=nullptr)) {
+        presenceObserved=true;playerPresent=entity!=nullptr;TraceLog("CAINE_PLAYER_PRESENCE: present="+std::to_string(playerPresent));
+    }
+    if (!entity) { inputObserved=false;observedPlayer=UINT32_MAX;Invalidate(true,"player absent/replaced");return; }
+    const auto component=Field<void*>(entity,0xa8);
+    const auto held=Field<uint32_t>(component,0x2088),pressed=Field<uint32_t>(component,0x208c),released=Field<uint32_t>(component,0x2090);
+    const auto fov=Field<int>(component,0x1e78);
+    if (!inputObserved || playerHandle!=observedPlayer) TraceLog("CAINE_PLAYER_BOUND: handle="+std::to_string(playerHandle));
+    if (!inputObserved || held!=lastHeld || pressed!=lastPressed || released!=lastReleased)
+        TraceLog("CAINE_PLAYER_INPUT: handle="+std::to_string(playerHandle)+" held="+std::to_string(held)+" pressed="+std::to_string(pressed)+" released="+std::to_string(released));
+    if (!inputObserved || fov!=lastFov) TraceLog("CAINE_PLAYER_FOV: native="+std::to_string(fov));
+    inputObserved=true;observedPlayer=playerHandle;lastHeld=held;lastPressed=pressed;lastReleased=released;lastFov=fov;
     if (desiredFov && command) {
         const auto player=Field<void*>(entity,0xa8);
         if (Readable(player,0x1e7c) && Field<int>(player,0x1e78)!=*desiredFov && GetTickCount64()-lastFovCommand>=250) {
-            lastFovCommand=GetTickCount64();command("fov "+std::to_string(*desiredFov)+"\n");
+            lastFovCommand=GetTickCount64();TraceLog("CAINE_FOV_REAPPLY: target="+std::to_string(*desiredFov));command("fov "+std::to_string(*desiredFov)+"\n");
         }
     }
     if (!pendingUse.captured || pendingUse.thread!=GetCurrentThreadId() || GetTickCount64()-pendingUse.captured<750) return;
     const auto candidate=pendingUse;pendingUse={};
-    if (live.copied.token && Visible()) return;
-    if (!HandleExists(candidate.copied.npcHandle) || HandleFor(entity)!=candidate.copied.playerHandle) return;
+    if (live.copied.token && Visible()) { TraceLog("CAINE_AMBIENT_HANDOFF_CANCELLED: native dialogue has priority");return; }
+    if (!HandleExists(candidate.copied.npcHandle) || HandleFor(entity)!=candidate.copied.playerHandle) { TraceLog("CAINE_AMBIENT_HANDOFF_CANCELLED: NPC/player handle changed");return; }
     Invalidate();live.copied=candidate.copied;live.copied.token=++nextToken;
     live.thread=GetCurrentThreadId();live.created=GetTickCount64();live.ambient=true;
     logger("CAINE_AMBIENT_CONVERSATION: token="+std::to_string(live.copied.token)+" source="+live.copied.source);
@@ -336,8 +355,9 @@ bool SetNativeFieldOfView(double value) {
     if (!std::isfinite(value)) return false;
     const auto bounded=static_cast<int>(std::round(std::clamp(value,60.,135.)));
     const auto path=FovConfig();std::error_code error;std::filesystem::create_directories(path.parent_path(),error);
-    if (error) return false;
-    if (!WritePrivateProfileStringW(L"Graphics",L"FieldOfView",std::to_wstring(bounded).c_str(),path.c_str())) return false;
+    if (error) { TraceLog("CAINE_FOV_SAVE_FAILED: settings directory unavailable");return false; }
+    if (!WritePrivateProfileStringW(L"Graphics",L"FieldOfView",std::to_wstring(bounded).c_str(),path.c_str())) { TraceLog("CAINE_FOV_SAVE_FAILED: win32="+std::to_string(GetLastError()));return false; }
+    TraceLog("CAINE_FOV_SAVED: value="+std::to_string(bounded));
     std::lock_guard<std::recursive_mutex> lock(mutex);fovRead=true;desiredFov=bounded;return true;
 }
 #ifdef CAINE_NATIVE_BRIDGE_TEST

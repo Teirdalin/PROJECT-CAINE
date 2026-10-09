@@ -1,6 +1,7 @@
 #include <caine/intro_skip.hpp>
 #include <caine/core.hpp>
 #include <caine/menu_view.hpp>
+#include <caine/logging.hpp>
 #include <shellapi.h>
 #include <mutex>
 #include <memory>
@@ -49,12 +50,19 @@ Status Scene(HWND window) {
     if (!engineClient) return {};
     using Test=bool(__thiscall*)(void*);
     using Name=const char*(__thiscall*)(void*);
-    if (!Method<Test>(57)(engineClient)) return {};
-    const auto name=Method<Name>(106)(engineClient);
+    const bool active=Method<Test>(57)(engineClient),paused=active && Method<Test>(59)(engineClient),console=active && Method<Test>(6)(engineClient);
+    const auto name=active?Method<Name>(106)(engineClient):nullptr;
     const auto length=name?strnlen_s(name,261):0;
-    const bool opening=length && length<=260 && IsOpeningLevel(std::string(name,length));
+    const auto level=length && length<=260?std::string(name,length):std::string{};
+    static std::string previous;static bool observed{},lastActive{},lastPaused{},lastConsole{};
+    if (!observed || level!=previous || active!=lastActive || paused!=lastPaused || console!=lastConsole) {
+        TraceLog("CAINE_ENGINE_STATE: active="+std::to_string(active)+" paused="+std::to_string(paused)+" console="+std::to_string(console)+" level="+level);
+        observed=true;previous=level;lastActive=active;lastPaused=paused;lastConsole=console;
+    }
+    if (!active) return {};
+    const bool opening=!level.empty() && IsOpeningLevel(level);
     const bool eligible=opening && window && GetForegroundWindow()==window &&
-        !menuVisible && !Method<Test>(59)(engineClient) && !Method<Test>(6)(engineClient);
+        !menuVisible && !paused && !console;
     return {opening,eligible};
 }
 void __cdecl NativeSkipCommand() noexcept {

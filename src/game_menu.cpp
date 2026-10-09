@@ -1,5 +1,6 @@
 #include <caine/game_menu.hpp>
 #include <caine/native_bridge.hpp>
+#include <caine/logging.hpp>
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -107,6 +108,11 @@ std::optional<GameMenuBackend> NativeGameMenuBackend(const Module& client) {
         return std::isfinite(value)?std::optional<double>(value):std::nullopt;
     };
     backend.command=[commands](const std::string& command) {
+        std::istringstream lines(command);std::string line;
+        while (std::getline(lines,line)) {
+            const auto end=line.find_first_of(" \t\r");
+            TraceLog("CAINE_ENGINE_COMMAND: verb="+line.substr(0,end)+" bytes="+std::to_string(line.size())+" arguments=omitted");
+        }
         using Command=void(__thiscall*)(void*,const char*);
         Method<Command>(commands,28)(commands,command.c_str());
     };
@@ -177,6 +183,7 @@ void GameMenus::RefreshBindings() {
     }
 }
 void GameMenus::Open(GameMenuPage page) {
+    TraceLog("CAINE_GAME_MENU_OPEN: page="+std::to_string(static_cast<int>(page)));
     page_=page;message_.clear();search_.clear();confirmSave_.clear();actions_.clear();pending_.clear();pendingMode_.reset();
     if (page==GameMenuPage::Settings && actionsList_.empty()) {
         std::istringstream source(ReadGameMenuResource(root_,active_,"scripts/kb_act.lst"));std::string line;
@@ -339,5 +346,9 @@ void GameMenus::Build(MenuView& view) {
     },pending_.empty() && !pendingMode_);
     button("Discard pending changes",[this]{pending_.clear();pendingMode_.reset();message_="Pending changes discarded.";return false;},pending_.empty() && !pendingMode_);
 }
-bool GameMenus::Action(uint32_t id,const std::string& text,double number) { const auto found=actions_.find(id);return found!=actions_.end() && found->second(text,number); }
+bool GameMenus::Action(uint32_t id,const std::string& text,double number) {
+    const auto found=actions_.find(id);
+    TraceLog("CAINE_GAME_MENU_ACTION: page="+std::to_string(static_cast<int>(page_))+" control="+std::to_string(id)+" number="+Number(number)+" text_bytes="+std::to_string(text.size())+" known="+std::to_string(found!=actions_.end()));
+    return found!=actions_.end() && found->second(text,number);
+}
 }

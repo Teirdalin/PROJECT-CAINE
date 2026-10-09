@@ -12,14 +12,14 @@ plugin API, modern menus, configuration, crash reports and serialization helpers
 CAINE has no AI service dependency. **Bloodlines: Unscripted** is a separate,
 optional AI mod and is not distributed by this repository or framework updater.
 
-Version **0.3.12-framework-dev** is a development prerelease. Native and renderer
+Version **0.3.13-framework-dev** is a development prerelease. Native and renderer
 regressions pass, but live gameplay acceptance remains pending. Character-creation
 crash investigation and optional Unscripted conversation acceptance are not
 claimed resolved by this release. No game binaries or unofficial SDK code are included.
 
 ## Install
 
-1. Download and extract the **PROJECT-CAINE-0.3.12-framework-dev.zip** player asset
+1. Download and extract the **PROJECT-CAINE-0.3.13-framework-dev.zip** player asset
    from [Releases](https://github.com/Teirdalin/PROJECT-CAINE/releases).
 2. Close Bloodlines and its mod selection window.
 3. Double-click **Install PROJECT CAINE.cmd** and select your **Vampire.exe**.
@@ -100,6 +100,9 @@ option requires the separately maintained Unscripted source tree.
 
 Logs: `%LOCALAPPDATA%\PROJECT CAINE\Bloodlines\logs`. Local crash reports and
 minidumps: `%LOCALAPPDATA%\PROJECT CAINE\Bloodlines\crashes`.
+`CAINE.log` starts empty on every launch and records detailed event traces by
+default. Matching PID logs remain linked to crash reports. See
+[debug logging](docs/DEBUG_LOGGING.md) for coverage and configuration.
 [Crash reporting](docs/CRASH_REPORTING.md) documents limits and configuration.
 `CAINE_READY` indicates engine observation; individual feature readiness is logged
 separately. Set `Runtime/Enabled=0` or `CAINE_DISABLED=1` for an emergency opt-out.
