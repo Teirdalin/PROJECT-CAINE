@@ -5,7 +5,7 @@
 #include <windows.h>
 #include <stdint.h>
 #define CAINE_MOD_ABI_V1 1u
-#define CAINE_FRAMEWORK_VERSION 0x00030Fu
+#define CAINE_FRAMEWORK_VERSION 0x000310u
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -19,6 +19,9 @@ Coverage includes:
 - Mod discovery, library loading, callback startup, enable changes and failures.
 - Runtime/render heartbeats every five seconds, with poll/frame counts and state.
 - Window attachment, focus and size changes; menu navigation and control events.
+- Thread input-queue installation/capture counts and overlay cursor validity,
+  foreground state, client dimensions and event counts, summarized every five
+  seconds without recording key values or typed text (0.3.16).
 - Gameplay player presence, handle replacement, input-button state and FOV changes.
 - Accepted NPC use, rejected use, ambient handoff, native dialogue packets,
   presentation ownership, original response selection, closure and invalidation.

@@ -65,3 +65,10 @@ native-loader installations and a separate fixture game process, including
 actual helper/PowerShell handoff and restart. Renderer tests exercise the progress
 modal and device reset. These do not establish a completed in-game update or
 live gameplay acceptance for every supported launcher.
+# Progress file reliability (0.3.16)
+
+The native helper reads metadata with Windows read/write/delete sharing. This
+allows the installer to replace its complete progress JSON atomically while the
+helper polls it; the previous CRT stream could deny replacement and abort an
+otherwise valid update. Metadata remains bounded to 2 MiB and incomplete reads
+are rejected. Progress polling tolerates a missing/invalid intermediate sample.

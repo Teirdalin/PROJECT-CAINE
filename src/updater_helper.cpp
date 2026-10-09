@@ -2,7 +2,6 @@
 #include <json.hpp>
 #include <shellapi.h>
 #include <commctrl.h>
-#include <fstream>
 #include <mutex>
 #include <thread>
 
@@ -17,8 +16,18 @@ void SetStatus(std::wstring text,int progress,bool done=false,bool error=false) 
     std::lock_guard<std::mutex> lock(mutex);message=std::move(text);percent=progress;finished=done;failed=error;
 }
 nlohmann::json Read(const std::filesystem::path& path) {
-    if(std::filesystem::file_size(path)>2*1024*1024)throw std::runtime_error("Oversized updater metadata");
-    std::ifstream input(path,std::ios::binary);return nlohmann::json::parse(input);
+    // Progress is atomically replaced by the installer. CRT ifstream denies
+    // delete sharing on Windows and could make that replacement fail while
+    // the helper polled it, aborting an otherwise valid installation.
+    Handle file{CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+        nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr)};
+    LARGE_INTEGER size{};
+    if(file.value==INVALID_HANDLE_VALUE || !GetFileSizeEx(file.value,&size))throw std::runtime_error("Cannot read updater metadata");
+    if(size.QuadPart<=0 || size.QuadPart>2*1024*1024)throw std::runtime_error("Invalid updater metadata size");
+    std::string content(static_cast<size_t>(size.QuadPart),'\0');DWORD read{};
+    if(!ReadFile(file.value,content.data(),static_cast<DWORD>(content.size()),&read,nullptr) || read!=content.size())
+        throw std::runtime_error("Incomplete updater metadata");
+    return nlohmann::json::parse(content);
 }
 void SafePath(const std::filesystem::path& path) {
     if(!path.is_absolute())throw std::runtime_error("Updater paths must be absolute");

@@ -7,6 +7,7 @@
 #include <caine/native_bridge.hpp>
 #include <caine/logging.hpp>
 #include <caine/overlay_input.hpp>
+#include <caine/window_input.hpp>
 #include <caine/preferences.hpp>
 #include <shellapi.h>
 #include <algorithm>
@@ -44,6 +45,7 @@ bool built{}, dirty = true;
 bool builtModern{};
 WNDPROC previousProcedure{};
 HWND gameWindow{};
+caine::WindowInput* windowInput{};
 caine::MenuRenderer* renderer{};
 bool modernReady{}, menuPainted{}, modernShown{}, nativeBusy{true};
 bool modernEnabled{true};
@@ -164,18 +166,23 @@ void BuildRows() {
         rows = std::move(previous);
     }
 }
-LRESULT CALLBACK WindowProcedure(HWND window, UINT msg, WPARAM wp, LPARAM lp) {
+std::optional<LRESULT> CaptureWindowMessage(HWND window, UINT msg, WPARAM wp, LPARAM lp) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
-    if (msg==WM_ACTIVATEAPP) caine::TraceLog("CAINE_WINDOW_FOCUS: active="+std::to_string(wp!=0));
-    else if (msg==WM_SIZE) caine::TraceLog("CAINE_WINDOW_SIZE: width="+std::to_string(LOWORD(lp))+" height="+std::to_string(HIWORD(lp))+" mode="+std::to_string(wp));
-    else if (msg==WM_CLOSE || msg==WM_DESTROY) caine::TraceLog("CAINE_WINDOW_EXIT: message="+std::to_string(msg));
+    if (window!=gameWindow) return {};
     if (msg==WM_KILLFOCUS || (msg==WM_ACTIVATEAPP && !wp) || msg==WM_DESTROY) {
         caine::CaptureOverlayInput(window,false);if (renderer) renderer->ClearInput();
+        return {};
     }
+    const bool inputMessage=(msg>=WM_MOUSEFIRST && msg<=WM_MOUSELAST) ||
+        (msg>=WM_KEYFIRST && msg<=WM_KEYLAST) || msg==WM_INPUT || msg==WM_SETCURSOR;
+    if (!inputMessage) return {};
     if (caine::CaptureIntroEscape(window,msg,wp)) return 0;
     const bool modal = modernReady && (modernShown || overlayShown) && GetTickCount64()-lastModernFrame<500;
-    if (modal && renderer) renderer->Input(msg, wp, lp);
     const bool bindingCapture=modal && renderer && renderer->CapturingKey();
+    // Preserve Windows shortcuts, including Alt-Tab/Alt-F4 during a key popup.
+    if ((msg==WM_SYSKEYDOWN || msg==WM_SYSKEYUP || msg==WM_SYSCHAR || msg==WM_SYSDEADCHAR) &&
+        (!bindingCapture || wp==VK_TAB || wp==VK_F4)) return {};
+    if (modal && renderer) renderer->Input(msg, wp, lp);
     if (page == Page::Configure && controls.empty()) {
         const auto menu=View();
         if (caine::ModMenu(selected, &menu, CAINE_MENU_WANTS_TEXT, 0)) {
@@ -191,25 +198,53 @@ LRESULT CALLBACK WindowProcedure(HWND window, UINT msg, WPARAM wp, LPARAM lp) {
     }
     if (modal) {
         if (overlayShown && msg==WM_SETCURSOR) { SetCursor(nullptr);return TRUE; }
-        if (msg == WM_KEYDOWN && wp == VK_ESCAPE && !bindingCapture) {
+        if (msg == WM_KEYDOWN && wp == VK_ESCAPE && !bindingCapture && !(lp&(1L<<30))) {
             if (overlayShown) overlayActions.push_back([id=overlayMod] { caine::ModGameUI(id,nullptr,CAINE_GAMEUI_CLOSE,0); });
             else if (page!=Page::Home) actions.push_back([] { confirmAction=-1;Go(Page::Home); });
             else if (std::any_of(nativeItems.begin(),nativeItems.end(),[](const auto& item){return item.id==11;})) actions.push_back([] { if (nativeMenu) clickOriginal(nativeMenu,11); });
         }
-        // DefWindowProc releases foreground raw-input storage without forwarding
-        // captured input to the game. System keys (Alt-F4/Alt-Tab) remain native.
         if (msg == WM_INPUT) return DefWindowProcW(window, msg, wp, lp);
-        if (bindingCapture && (msg==WM_SYSKEYDOWN || msg==WM_SYSKEYUP) && wp!=VK_TAB && wp!=VK_F4) return 0;
+        if (bindingCapture && (msg==WM_SYSKEYDOWN || msg==WM_SYSKEYUP || msg==WM_SYSCHAR || msg==WM_SYSDEADCHAR)) return 0;
         if ((msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_CHAR || msg == WM_DEADCHAR) return 0;
     }
+    return {};
+}
+LRESULT CALLBACK WindowProcedure(HWND window, UINT msg, WPARAM wp, LPARAM lp) {
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    if (msg==WM_ACTIVATEAPP) caine::TraceLog("CAINE_WINDOW_FOCUS: active="+std::to_string(wp!=0));
+    else if (msg==WM_SIZE) caine::TraceLog("CAINE_WINDOW_SIZE: width="+std::to_string(LOWORD(lp))+" height="+std::to_string(HIWORD(lp))+" mode="+std::to_string(wp));
+    else if (msg==WM_CLOSE || msg==WM_DESTROY) caine::TraceLog("CAINE_WINDOW_EXIT: message="+std::to_string(msg));
+    if (msg==WM_KILLFOCUS || (msg==WM_ACTIVATEAPP && !wp) || msg==WM_DESTROY) {
+        caine::CaptureOverlayInput(window,false);if (renderer) renderer->ClearInput();
+    }
+    if (const auto result=CaptureWindowMessage(window,msg,wp,lp)) return *result;
     return previousProcedure ? CallWindowProcW(previousProcedure, window, msg, wp, lp) : DefWindowProcW(window, msg, wp, lp);
 }
-BOOL CALLBACK FindGameWindow(HWND window, LPARAM) {
-    DWORD pid{}; GetWindowThreadProcessId(window, &pid);
-    if (pid == GetCurrentProcessId() && IsWindowVisible(window) && !GetWindow(window, GW_OWNER)) {
-        gameWindow = window;caine::TraceLog("CAINE_WINDOW_ATTACHED: thread="+std::to_string(GetWindowThreadProcessId(window,nullptr)));return FALSE;
+void AttachGameWindow(IDirect3DDevice9* device) {
+    D3DDEVICE_CREATION_PARAMETERS creation{};D3DPRESENT_PARAMETERS present{};
+    IDirect3DSwapChain9* chain{};
+    HWND window{};
+    if (SUCCEEDED(device->GetSwapChain(0,&chain))) {
+        if (SUCCEEDED(chain->GetPresentParameters(&present))) window=present.hDeviceWindow;
+        chain->Release();
     }
-    return TRUE;
+    if (!window && SUCCEEDED(device->GetCreationParameters(&creation))) window=creation.hFocusWindow;
+    DWORD process{};
+    if (!window || window==gameWindow || GetWindowThreadProcessId(window,&process)!=GetCurrentThreadId() || process!=GetCurrentProcessId()) return;
+    // A native subclass may still reference our old callback. Do not detach
+    // from underneath it or replace its saved predecessor with another HWND's.
+    if (gameWindow && IsWindow(gameWindow) && GetWindowLongPtrW(gameWindow,GWLP_WNDPROC)!=reinterpret_cast<LONG_PTR>(WindowProcedure)) return;
+    caine::CaptureOverlayInput(gameWindow,false);
+    if (renderer) renderer->ClearInput();
+    if (gameWindow && IsWindow(gameWindow) && GetWindowLongPtrW(gameWindow,GWLP_WNDPROC)==reinterpret_cast<LONG_PTR>(WindowProcedure))
+        SetWindowLongPtrW(gameWindow,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(previousProcedure));
+    gameWindow=window;
+    SetLastError(0);
+    previousProcedure=reinterpret_cast<WNDPROC>(SetWindowLongPtrW(window,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(WindowProcedure)));
+    if (!previousProcedure && GetLastError()) { gameWindow=nullptr;caine::WriteLog("CAINE_WINDOW_ATTACH_FAILED");return; }
+    if (!windowInput) windowInput=new caine::WindowInput();
+    if (!windowInput->Attach(window,CaptureWindowMessage)) caine::WriteLog("CAINE_INPUT_QUEUE_UNAVAILABLE: window callback retained");
+    caine::TraceLog("CAINE_WINDOW_ATTACHED: renderer=1 thread="+std::to_string(GetCurrentThreadId()));
 }
 const int* __fastcall MenuItems(void* self, void*, int* count) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
@@ -331,10 +366,6 @@ void __fastcall MenuPaint(void* self, void*) {
             }
             dirty=false;
         }
-        if (!gameWindow) {
-            EnumWindows(FindGameWindow, 0);
-            if (gameWindow) previousProcedure = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(gameWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(WindowProcedure)));
-        }
     } catch (...) { message = "Mod configuration operation failed";caine::TraceLog("CAINE_MENU_CALLBACK_FAILED: page="+std::to_string(static_cast<int>(page))); }
     // Exact supported client profile: native constructor and Paint use these
     // float alpha fields. Keep lifecycle/audio/native dialogs in original Paint,
@@ -405,10 +436,7 @@ void PaintModernMenu(IDirect3DDevice9* device) {
         lastRenderHeartbeat=GetTickCount64();
         TraceLog("CAINE_RENDER_HEARTBEAT: frames="+std::to_string(renderFrames)+" native_menu="+std::to_string(menuPainted)+" modern="+std::to_string(modernShown)+" overlay="+std::to_string(overlayShown)+" page="+std::to_string(static_cast<int>(page))+" window_thread="+std::to_string(gameWindow?GetWindowThreadProcessId(gameWindow,nullptr):0));
     }
-    if (!gameWindow) {
-        EnumWindows(FindGameWindow,0);
-        if (gameWindow) previousProcedure=reinterpret_cast<WNDPROC>(SetWindowLongPtrW(gameWindow,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(WindowProcedure)));
-    }
+    AttachGameWindow(device);
     // Every frame releases capture unless an overlay successfully renders below.
     // Renewal happens before polling on the next game frame.
     if (!gameWindow || GetWindowThreadProcessId(gameWindow,nullptr)!=GetCurrentThreadId()) { CaptureOverlayInput(gameWindow,false);return; }

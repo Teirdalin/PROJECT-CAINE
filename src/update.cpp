@@ -34,7 +34,7 @@ std::string ReadJson(const std::filesystem::path& path) {
     return std::string(std::istreambuf_iterator<char>(input),{});
 }
 std::string Fetch(std::string url,bool api,const std::filesystem::path& output={},uint64_t expected=0) {
-    Internet session{WinHttpOpen(L"PROJECT-CAINE/0.3.15",WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,nullptr,nullptr,0)};
+    Internet session{WinHttpOpen(L"PROJECT-CAINE/0.3.16",WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,nullptr,nullptr,0)};
     if(!session.handle)throw std::runtime_error("Cannot initialize HTTPS update request");
     WinHttpSetTimeouts(session.handle,5000,5000,10000,15000);
     for(int hop=0;hop<6;++hop) {

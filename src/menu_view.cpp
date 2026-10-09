@@ -123,7 +123,7 @@ struct MenuRenderer::State {
         size_t slot{};
         std::string context, label, candidate;
     } capture;
-    ULONGLONG last{}, graphicsChecked{};
+    ULONGLONG last{}, graphicsChecked{}, inputChecked{};
     bool previousText{}, resetInput{};
     struct Field {
         std::vector<char> buffer;
@@ -228,10 +228,18 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
     const auto now = GetTickCount64(); io.DeltaTime = s.last ? std::clamp(static_cast<float>(now - s.last) / 1000.0f, 0.001f, 0.1f) : 1.0f / 60.0f; s.last = now;
     if (!s.graphicsChecked || now-s.graphicsChecked>=5000) { ObserveGraphics(s.device,surface);s.graphicsChecked=now; }
     POINT cursor{}; RECT client{};
-    if (window && GetCursorPos(&cursor) && ScreenToClient(window, &cursor) && GetClientRect(window, &client) && client.right && client.bottom && GetForegroundWindow() == window) {
+    const bool foreground=window && GetForegroundWindow()==window;
+    const bool cursorValid=window && GetClientRect(window,&client) && client.right>0 && client.bottom>0 &&
+        GetCursorPos(&cursor) && ScreenToClient(window,&cursor) && foreground;
+    if (cursorValid) {
         io.AddMousePosEvent(static_cast<float>(cursor.x) * width / static_cast<float>(client.right), static_cast<float>(cursor.y) * height / static_cast<float>(client.bottom));
     } else io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+    bool queuedButton{};
+    unsigned mouseEvents{},keyEvents{},textEvents{};
     for (const auto& event : s.input) {
+        mouseEvents+=event.message>=WM_MOUSEFIRST && event.message<=WM_MOUSELAST;
+        keyEvents+=event.message==WM_KEYDOWN || event.message==WM_KEYUP;
+        textEvents+=event.message==WM_CHAR;
         if (s.capture.active) {
             if ((event.message==WM_KEYDOWN && event.value==VK_ESCAPE) || event.message==WM_KILLFOCUS ||
                 (event.message==WM_ACTIVATEAPP && !event.value)) s.capture.cancel=true;
@@ -243,7 +251,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
         }
         if (event.message==WM_MOUSEMOVE && client.right && client.bottom)
             io.AddMousePosEvent(static_cast<float>(GET_X_LPARAM(event.data))*width/static_cast<float>(client.right),static_cast<float>(GET_Y_LPARAM(event.data))*height/static_cast<float>(client.bottom));
-        else if (event.message == WM_LBUTTONDOWN || event.message == WM_LBUTTONUP) io.AddMouseButtonEvent(0, event.message == WM_LBUTTONDOWN);
+        else if (event.message == WM_LBUTTONDOWN || event.message == WM_LBUTTONUP) { queuedButton=true;io.AddMouseButtonEvent(0, event.message == WM_LBUTTONDOWN); }
         else if (event.message == WM_MOUSEWHEEL) io.AddMouseWheelEvent(0, static_cast<float>(GET_WHEEL_DELTA_WPARAM(event.value)) / WHEEL_DELTA);
         else if ((!view.wantsText || !view.controls.empty()) && (event.message == WM_KEYDOWN || event.message == WM_KEYUP)) {
             const auto key = Key(event.value); if (key != ImGuiKey_None) io.AddKeyEvent(key, event.message == WM_KEYDOWN);
@@ -251,8 +259,15 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
     }
     s.input.clear();
     // Poll for releases lost during an Alt-Tab. Queued events still preserve quick clicks.
-    const bool pressed = window && GetForegroundWindow() == window && (GetAsyncKeyState(VK_LBUTTON) & 0x8000);
-    io.AddMouseButtonEvent(0, pressed);
+    const bool pressed = foreground && (GetAsyncKeyState(VK_LBUTTON) & 0x8000);
+    if (!queuedButton) io.AddMouseButtonEvent(0, pressed);
+    if (view.overlay && (!s.inputChecked || now-s.inputChecked>=5000)) {
+        s.inputChecked=now;
+        TraceLog("CAINE_OVERLAY_INPUT_FRAME: foreground="+std::to_string(foreground)+" cursor_valid="+std::to_string(cursorValid)+
+            " cursor_x="+std::to_string(cursor.x)+" cursor_y="+std::to_string(cursor.y)+
+            " client_width="+std::to_string(client.right)+" client_height="+std::to_string(client.bottom)+
+            " mouse_events="+std::to_string(mouseEvents)+" key_events="+std::to_string(keyEvents)+" text_events="+std::to_string(textEvents));
+    }
     if (view.wantsText != s.previousText) { io.ClearInputKeys(); s.previousText = view.wantsText; }
     if (!ImGui_ImplDX9_CreateDeviceObjects()) return false;
     ImGui_ImplDX9_NewFrame(); ImGui::NewFrame();
@@ -432,7 +447,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
         }
         if(view.update.available && ImGui::Button("Update Available",{buttonWidth,buttonHeight}))actions.push_back({MenuActionKind::Update,{}});
         ImGui::End();ImGui::PopStyleColor(3);ImGui::PopStyleVar(2);
-        const char* version="PROJECT CAINE 0.3.15";
+        const char* version="PROJECT CAINE 0.3.16";
         const auto size=ImGui::CalcTextSize(version);
         draw->AddText({(width-size.x)/2,height-28*scale},IM_COL32(145,136,141,255),version);
     } else if (view.confirmation) {
@@ -546,7 +561,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
     } else ImGui::TextWrapped("Select a mod to view its details and settings.");
     ImGui::EndChild(); ImGui::Separator();
     if (ImGui::Button("Back to main menu")) actions.push_back({MenuActionKind::Close,{}});
-    ImGui::SameLine(); ImGui::TextDisabled("  ESC  /  Close     |     CAINE 0.3.15");
+    ImGui::SameLine(); ImGui::TextDisabled("  ESC  /  Close     |     CAINE 0.3.16");
     ImGui::End();
     }
     if(view.updateOpen) {

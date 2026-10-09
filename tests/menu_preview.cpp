@@ -1,6 +1,7 @@
 #include <caine/menu_view.hpp>
 #include <caine/game_menu.hpp>
 #include <caine/preferences.hpp>
+#include <caine/window_input.hpp>
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <iostream>
@@ -102,6 +103,10 @@ int wmain(int argc, wchar_t** argv) {
                     {CAINE_CONTROL_BUTTON,100,0,0,"An original response with a longer explanation can wrap across several lines while preserving its complete text and its native choice index. CAINE uses the game's original handler for conditions, costs, quest scripts and transitions."},
                     {CAINE_CONTROL_BUTTON,101,0,0,"Leave"}};
             }
+            if (mode==L"dialogue-queue") {
+                view.pageTitle="Bloodlines: Unscripted";view.overlay=true;view.wantsText=true;
+                view.controls={{CAINE_CONTROL_HEADING,0,0,0,"Jack Tutorial"},{CAINE_CONTROL_TEXT,10,0,0,"Write what you would like to say below."},{CAINE_CONTROL_INPUT,1,CAINE_CONTROL_SUBMIT,8192,"Your reply"}};
+            }
             if (mode==L"bindings") {
                 view.pageTitle="Settings";
                 view.controls={{caine::MenuControlBindings,1,0,0,"Primary attack",{}, {},0,0,0,{"MOUSE1","SPACE"}},
@@ -134,6 +139,11 @@ int wmain(int argc, wchar_t** argv) {
                                {CAINE_CONTROL_INPUT,4,CAINE_CONTROL_SECRET,512,"API key",{},"Masked and cleared after submission.",0,0,0}};
             }
             std::vector<caine::MenuAction> events;
+            caine::WindowInput inputQueue;
+            if (mode==L"dialogue-queue") Check(inputQueue.Attach(window,[&](HWND,UINT message,WPARAM value,LPARAM data)->std::optional<LRESULT> {
+                if ((message>=WM_MOUSEFIRST && message<=WM_MOUSELAST) || message==WM_KEYDOWN || message==WM_KEYUP || message==WM_CHAR) { renderer.Input(message,value,data);return 0; }
+                return {};
+            }),"real Windows queue capture");
             for (int phase=0; phase<2; ++phase) {
                 for (int frame=0; frame<4; ++frame) {
                     if (mode==L"ambient") renderer.Input(WM_MOUSEMOVE,0,MAKELPARAM(1550,780));
@@ -172,6 +182,27 @@ int wmain(int argc, wchar_t** argv) {
             Save(device.Get(),argv[1]);
             Check(renderer.FontUploads()==1,"font atlas was uploaded again across frames/device Reset");
             Check(events.empty(),"UI emitted an action without input");
+            if (mode==L"dialogue-queue") {
+                auto frame=[&](UINT message,WPARAM value,LPARAM data=0) {
+                    if (message==WM_LBUTTONDOWN || message==WM_LBUTTONUP) Check(PostMessageW(window,WM_MOUSEMOVE,0,data)!=FALSE,"queue pointer position");
+                    if (message) Check(PostMessageW(window,message,value,data)!=FALSE,"post owned fixture input");
+                    MSG queued{};while (PeekMessageW(&queued,nullptr,0,0,PM_REMOVE)) { TranslateMessage(&queued);DispatchMessageW(&queued); }
+                    Check(SUCCEEDED(device->BeginScene()),"queue BeginScene");
+                    Check(renderer.Render(window,view,events),"queue render");
+                    Check(SUCCEEDED(device->EndScene()),"queue EndScene");
+                };
+                frame(WM_CHAR,'Z');frame(WM_CHAR,0x00e9);frame(WM_KEYDOWN,VK_RETURN);frame(WM_KEYUP,VK_RETURN);frame(0,0);
+                bool sent{};for(const auto& event:events) sent|=event.kind==caine::MenuActionKind::Control && event.value==1 && event.text=="Z\xc3\xa9";
+                Check(sent,"real queued Unicode/Enter did not submit free text");
+                events.clear();
+                RECT client{};Check(GetClientRect(window,&client)!=FALSE,"queue client rectangle");
+                // Actual End Conversation button in the compact 1280x720 view.
+                const auto point=MAKELPARAM(382*client.right/width,470*client.bottom/height);
+                frame(WM_MOUSEMOVE,0,point);frame(WM_LBUTTONDOWN,MK_LBUTTON,point);frame(WM_LBUTTONUP,0,point);frame(0,0);
+                bool closed{};for(const auto& event:events) closed|=event.kind==caine::MenuActionKind::Close;
+                Check(closed,"real queued mouse click did not close conversation");
+                std::cout<<"CAINE_DIALOGUE_QUEUE_OK: Windows queue to actual renderer, Unicode typing, Enter submission and End Conversation click\n";
+            }
             if (mode == L"details" || mode==L"home" || mode==L"controls" || mode==L"bindings" || mode==L"dialogue" || mode==L"update-available") {
                 auto inputFrame = [&](UINT message, WPARAM value, LPARAM data=0) {
                     renderer.Input(message,value,data);

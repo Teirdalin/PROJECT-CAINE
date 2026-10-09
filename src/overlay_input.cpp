@@ -12,6 +12,12 @@ using EventFn=void(__thiscall*)(void*,int,int);
 MouseFn activate{},accumulate{},reset{},deactivate{};
 MoveFn move{};
 EventFn buttons{};
+using EngineCursorFn=void(__cdecl*)(int,int);
+using SurfaceCursorFn=void(__cdecl*)(HWND,int,int);
+EngineCursorFn engineCursor{};
+SurfaceCursorFn surfaceCursor{};
+Hooks* engineCursorHooks{};
+Hooks* surfaceCursorHooks{};
 Hooks* hooks{};
 uint8_t* input{};
 std::atomic<HWND> ownerWindow{};
@@ -34,6 +40,30 @@ ULONGLONG Now() { return GetTickCount64(); }
 bool Captured() {
     const auto until=lease.load();
     return until && Now()<until && Foreground()==ownerWindow.load();
+}
+void __cdecl EngineCursor(int x,int y) { if (!Captured()) engineCursor(x,y); }
+void __cdecl SurfaceCursor(HWND window,int x,int y) {
+    if (!Captured() || window!=ownerWindow.load()) surfaceCursor(window,x,y);
+}
+void InstallCursorWarps(const std::function<void(const std::string&)>& log) {
+    const auto engineHandle=GetModuleHandleW(L"engine.dll"),surfaceHandle=GetModuleHandleW(L"vguimatsurface.dll");
+    const auto engine=engineHandle?Module::Inspect(engineHandle):Module{};
+    const auto surface=surfaceHandle?Module::Inspect(surfaceHandle):Module{};
+    constexpr char engineHash[]="9d9aa493cdb0d26820d8cc2db005f84fd74d0cefb642a2a056d95e8e405bcff5";
+    constexpr char surfaceHash[]="2ac31c4c6485fa2e11d9f88321ff7d5befaf5988825f5d1751bb31ef6e73ab7c";
+    if (!engineCursorHooks && engine.sha256==engineHash) {
+        std::vector<uint8_t> bytes{0xa1,0,0,0,0,0x85,0xc0,0x74,0x1f};
+        const auto operand=reinterpret_cast<uint32_t>(engine.base+0xa419bc);memcpy(bytes.data()+1,&operand,4);
+        auto owner=new Hooks();std::string error;
+        if (owner->Install(engine,{"input.overlay.engine_cursor",engineHash,0x4bb50,bytes},reinterpret_cast<void*>(EngineCursor),reinterpret_cast<void**>(&engineCursor),error)) engineCursorHooks=owner;
+        else { if (!owner->Count()) delete owner;log("CAINE_ENGINE_CURSOR_UNAVAILABLE: "+error); }
+    }
+    if (!surfaceCursorHooks && surface.sha256==surfaceHash) {
+        auto owner=new Hooks();std::string error;
+        if (owner->Install(surface,{"input.overlay.surface_cursor",surfaceHash,0x2b40,{0x83,0xec,0x08,0x8b,0x44,0x24,0x10,0x8b,0x4c,0x24,0x14}},reinterpret_cast<void*>(SurfaceCursor),reinterpret_cast<void**>(&surfaceCursor),error)) surfaceCursorHooks=owner;
+        else { if (!owner->Count()) delete owner;log("CAINE_SURFACE_CURSOR_UNAVAILABLE: "+error); }
+    }
+    log("CAINE_CURSOR_WARP_GUARDS: engine="+std::to_string(engineCursorHooks!=nullptr)+" surface="+std::to_string(surfaceCursorHooks!=nullptr));
 }
 void Release() {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
@@ -97,8 +127,10 @@ bool InstallOverlayInput(const Module& client,const std::function<void(const std
         log("CAINE_OVERLAY_INPUT_UNAVAILABLE: "+error);return false;
     }
     hooks=owner;
+    try { InstallCursorWarps(log); } catch (const std::exception& error) { log(std::string("CAINE_CURSOR_WARP_UNAVAILABLE: ")+error.what()); }
     log("CAINE_OVERLAY_INPUT_READY: guarded mouse activation, polling, camera, recenter and button capture");return true;
 }
+bool OverlayInputCaptured(HWND window) { return Captured() && (!window || window==ownerWindow.load()); }
 void CaptureOverlayInput(HWND window,bool capture) {
     if (!hooks) return;
     std::lock_guard<std::recursive_mutex> lock(stateMutex);

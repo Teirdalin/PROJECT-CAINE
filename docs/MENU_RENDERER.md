@@ -1,4 +1,4 @@
-# Modern menus (CAINE 0.3.15)
+# Modern menus (CAINE 0.3.16)
 
 CAINE draws inside Bloodlines with Dear ImGui 1.91.9b and the upstream DirectX 9
 backend. Normal startup through the native loader is retained.
@@ -151,6 +151,33 @@ Dear ImGui: https://github.com/ocornut/imgui/releases/tag/v1.91.9b (MIT).
 Source provenance: third_party/imgui/SOURCE.json.
 Backend: https://github.com/ocornut/imgui/blob/v1.91.9b/backends/imgui_impl_dx9.cpp.
 
-## Cursor ownership (0.3.8)
+## Input and cursor ownership (0.3.16)
 
-Bloodlines owns the menu cursor. CAINE no longer draws an ImGui cursor or suppresses native WM_SETCURSOR handling. Its mouse position tracking and menu input capture remain active. Native renderer/action checks pass; single-cursor appearance requires live acceptance.
+Bloodlines owns the cursor on native main/pause menus. A mod's gameplay overlay
+draws one software cursor and suppresses the native cursor while it owns input.
+The window is selected from the actual D3D9 swap chain, with the device's focus
+window as fallback, rather than an arbitrary visible window in the process.
+
+CAINE installs a game-thread `WH_GETMESSAGE` hook. Removed messages for that
+window pass through the same modal policy as directly sent window messages.
+Captured events reach the renderer before Bloodlines' internal queued input or
+VGUI handling. Captured key-downs are translated once with Windows' current
+keyboard layout; subsequent Unicode character messages enter the same queue.
+Non-removing peeks, other windows, focus/lifecycle messages, non-modal gameplay
+and system shortcuts retain native dispatch. A native WNDPROC replacement does
+not remove the queue hook. No polling-to-text conversion or synthetic typing is
+used in the game.
+
+The existing foreground frame lease also blocks exact-profile engine cursor
+warps at engine RVA `0x4bb50` and VGUI surface warps at `0x2b40`; the latter
+blocks only the captured HWND. Outside the lease both delegate to their native
+trampolines. Both module SHA-256 identities and complete entry instructions are
+validated. Unsupported profiles retain their existing cursor behavior.
+
+Tests exercise actual removed Windows messages on owned hidden windows after
+a WNDPROC replacement, and actual D3D9 widgets for Unicode/Enter submission and
+an End Conversation mouse click. The installed engine/client/surface binaries
+are mapped locally to execute the production cursor detours, including native
+passthrough. These checks do not establish live NPC, fullscreen or Alt-Tab
+acceptance. Input diagnostics record cursor validity, foreground state, client
+dimensions and event counts every five seconds, without keys or typed text.
