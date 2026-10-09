@@ -5,7 +5,11 @@
 #include <iostream>
 #include <stdexcept>
 #include <thread>
-namespace caine { void TestNativeOriginals(void*,void*,void*,void*,void*,void*); }
+namespace caine {
+void TestNativeOriginals(void*,void*,void*,void*,void*,void*);
+void TestNativeInteractionOriginals(void*,void*);
+void TestExpirePendingUse();void TestNativeFovConfig(int);void TestReloadFovConfig();
+}
 namespace {
 unsigned paints{},picks{},releases{};int choice{};bool forced{};
 void Check(bool value,const char* message) { if (!value) throw std::runtime_error(message); }
@@ -15,6 +19,22 @@ void __fastcall Paint(void*,void*) { ++paints; }
 void __fastcall Active(void*,void*,bool) {}
 void __fastcall Pick(void*,void*,int index,bool force) { ++picks;choice=index;forced=force; }
 const char* __fastcall Filename(void*,void*) { return "santa monica/jeanette.dlg"; }
+void* localEntity{};
+void* __cdecl LocalPlayer() { return localEntity; }
+__declspec(naked) void UseReturn() { __asm ret }
+__declspec(naked) void __cdecl UseEntry(void*,void*,void*) {
+    __asm {
+        push esi
+        push edi
+        mov eax,dword ptr [esp+12]
+        mov edi,dword ptr [esp+16]
+        mov esi,dword ptr [esp+20]
+        call eax
+        pop edi
+        pop esi
+        ret
+    }
+}
 template<class T> void Put(void* object,size_t offset,T value) { memcpy(static_cast<uint8_t*>(object)+offset,&value,sizeof(value)); }
 }
 int wmain(int argc,wchar_t** argv) {
@@ -23,7 +43,7 @@ int wmain(int argc,wchar_t** argv) {
         const auto game=LoadLibraryExW(argv[1],nullptr,DONT_RESOLVE_DLL_REFERENCES);
         const auto client=LoadLibraryExW(argv[2],nullptr,DONT_RESOLVE_DLL_REFERENCES);
         Check(game && client,"map installed native modules");
-        Check(caine::InstallNativeBridge([](const auto&){}),"exact production profile and hook batch");
+        Check(caine::InstallNativeBridge([](const auto& message){std::cout<<message<<'\n';}),"exact production profile and hook batch");
         caine::TestNativeOriginals(reinterpret_cast<void*>(Packet),reinterpret_cast<void*>(Release),reinterpret_cast<void*>(Paint),reinterpret_cast<void*>(Active),reinterpret_cast<void*>(Pick),reinterpret_cast<void*>(Filename));
         std::array<uint8_t,0x2838> dialog{};std::array<uint8_t,0x2804> packet{};std::array<uint8_t,0x6000> hud{};
         std::array<uint8_t,8192*12> entities{};int npc{},player{};
@@ -68,6 +88,47 @@ int wmain(int argc,wchar_t** argv) {
         Check(releases==1 && !caine::ReadNativeDialogue(output),"dialogue release lifetime");
         capture(dialog.data(),packet.data());paint(hud.data());Put(dialog.data(),0x2834,0);capture(dialog.data(),packet.data());
         Check(!caine::ReadNativeDialogue(output),"auto-end packet retained previous context");
+        // Execute the real installed PlayerUse boundary with its inspected EDI /
+        // ESI contract. Substitute the continuation, not the production detour.
+        std::array<uint8_t,0xac> playerEntity{};std::array<uint8_t,0x3000> playerComponent{};
+        localEntity=playerEntity.data();Put(playerEntity.data(),0xa8,playerComponent.data());
+        Put(entities.data(),24+4,playerEntity.data());
+        caine::TestNativeInteractionOriginals(reinterpret_cast<void*>(LocalPlayer),reinterpret_cast<void*>(UseReturn));
+        const auto window=CreateWindowExW(0,L"STATIC",L"CAINE native interaction test",0,0,0,10,10,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
+        Check(window!=nullptr,"test game-thread window");
+        const auto use=reinterpret_cast<uint8_t*>(game)+0x167aa6;
+        auto ambient=[&] { UseEntry(use,&npc,playerComponent.data());caine::TestExpirePendingUse();caine::PulseNativeBridge(window); };
+        caine::InvalidateNativeDialogue();caine::TestNativeFovConfig(0);
+        ambient();Check(!caine::ReadNativeDialogue(output),"held or scripted use started ambient UI");
+        Put(playerComponent.data(),0x208c,0x20u);UseEntry(use,&npc,playerComponent.data());
+        caine::PulseNativeBridge(window);Check(!caine::ReadNativeDialogue(output),"ambient UI preempted native dialogue wait");
+        caine::TestExpirePendingUse();caine::PulseNativeBridge(window);
+        Check(caine::ReadNativeDialogue(output) && output.responseCount==0 && output.line==-1 && !*output.opening,"accepted ambient context");
+        Check(caine::ClaimNativeDialogue(&owner,output.token,true),"ambient claim");
+        const auto ambientPaints=paints,ambientPicks=picks;paint(hud.data());Check(paints==ambientPaints+1,"ambient UI suppressed unrelated HUD");
+        Check(!caine::QueueNativeDialoguePick(&owner,output.token,0),"ambient interaction invented native quest action");
+        Check(caine::QueueNativeDialoguePick(&owner,output.token,-2) && !caine::ReadNativeDialogue(output) && picks==ambientPicks,"ambient close called native HUD handler");
+        UseEntry(use,&npc,playerComponent.data());Put(dialog.data(),0x2834,1);capture(dialog.data(),packet.data());
+        reinterpret_cast<VoidCall>(reinterpret_cast<uint8_t*>(game)+0xe5240)(dialog.data());
+        caine::TestExpirePendingUse();caine::PulseNativeBridge(window);
+        Check(caine::ReadNativeDialogue(output) && output.responseCount==0,"auto-end native float swallowed accepted NPC use");
+        caine::InvalidateNativeDialogue();
+        UseEntry(use,&npc,playerComponent.data());Put(dialog.data(),0x2834,2);capture(dialog.data(),packet.data());paint(hud.data());
+        caine::TestExpirePendingUse();caine::PulseNativeBridge(window);
+        Check(caine::ReadNativeDialogue(output) && output.responseCount==2,"native quest dialogue lost priority");
+        caine::InvalidateNativeDialogue();UseEntry(use,&npc,playerComponent.data());Put(entities.data(),12+8,3u);
+        caine::TestExpirePendingUse();caine::PulseNativeBridge(window);Check(!caine::ReadNativeDialogue(output),"recycled pending NPC accepted");
+        Put(entities.data(),12+8,2u);ambient();Check(caine::ReadNativeDialogue(output),"ambient recovery after serial change");
+        Check(caine::ClaimNativeDialogue(&owner,output.token,true),"ambient re-claim");
+        caine::ClaimNativeDialogue(&owner,0,false);Check(!caine::ReadNativeDialogue(output),"ambient release reopened conversation");
+        UseEntry(use,&npc,playerComponent.data());caine::InvalidateNativeDialogue();caine::TestExpirePendingUse();caine::PulseNativeBridge(window);
+        Check(!caine::ReadNativeDialogue(output),"save/load boundary retained pending use");
+        caine::TestNativeFovConfig(135);caine::PulseNativeBridge(window);
+        Check(*reinterpret_cast<int*>(playerComponent.data()+0x1e78)==135,"FOV applied to wrong player field");
+        Check(caine::SetNativeFieldOfView(127),"FOV preference persistence");caine::TestReloadFovConfig();
+        Check(caine::NativeFieldOfView()==127,"FOV did not survive config reload");caine::PulseNativeBridge(window);
+        Check(*reinterpret_cast<int*>(playerComponent.data()+0x1e78)==127,"reloaded FOV preference not applied");
+        localEntity=nullptr;caine::PulseNativeBridge(window);DestroyWindow(window);
         std::cout<<"CAINE_DIALOGUE_NATIVE_OK: installed DLL profile guards, production detours and x86 entry ABIs, UTF-8 context, native choices, serial reuse, closure/release and stale response rejection; full gameplay pending\n";return 0;
     } catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

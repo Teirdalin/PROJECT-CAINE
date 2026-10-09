@@ -1,4 +1,5 @@
 #include <caine/game_menu.hpp>
+#include <caine/native_bridge.hpp>
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -94,6 +95,8 @@ std::optional<GameMenuBackend> NativeGameMenuBackend(const Module& client) {
         (*static_cast<uint8_t***>(game))[1]!=engine.base+0xfbbb0 ||
         (*static_cast<uint8_t***>(game))[2]!=engine.base+0xfbbc0) return {};
     GameMenuBackend backend;
+    backend.fieldOfView=[] { return NativeFieldOfView(); };
+    backend.setFieldOfView=[](double value) { return SetNativeFieldOfView(value); };
     backend.read=[cvars](const char* name)->std::optional<double> {
         using Find=void*(__thiscall*)(void*,const char*);
         const auto variable=static_cast<uint8_t*>(Method<Find>(cvars,2)(cvars,name));
@@ -171,7 +174,7 @@ void GameMenus::RefreshBindings() {
     }
 }
 void GameMenus::Open(GameMenuPage page) {
-    page_=page;message_.clear();search_.clear();confirmSave_.clear();actions_.clear();pending_.clear();pendingMode_.reset();
+    page_=page;message_.clear();search_.clear();confirmSave_.clear();actions_.clear();pending_.clear();pendingMode_.reset();pendingFov_.reset();
     if (page==GameMenuPage::Settings && actionsList_.empty()) {
         std::istringstream source(ReadGameMenuResource(root_,active_,"scripts/kb_act.lst"));std::string line;
         while (std::getline(source,line)) {
@@ -241,7 +244,12 @@ void GameMenus::Build(MenuView& view) {
         },saving?saveName_.empty():selectedSave_.empty());return;
     }
     view.pageTitle="Settings";
-    for (const std::string tab:{"Audio","Mouse","Keyboard","Gameplay","Video","Visual"}) add(CAINE_CONTROL_TAB,tab,{},0,0,0,tab==tab_?CAINE_CONTROL_SELECTED:0,[this,tab](const std::string&,double){tab_=tab;search_.clear();if(tab=="Keyboard")RefreshBindings();return false;});
+    for (const std::string tab:{"Audio","Mouse","Keyboard","Gameplay","Video","Visual"}) add(CAINE_CONTROL_TAB,tab=="Visual"?"Graphics":tab,{},0,0,0,tab==tab_?CAINE_CONTROL_SELECTED:0,[this,tab](const std::string&,double){tab_=tab;search_.clear();if(tab=="Keyboard")RefreshBindings();return false;});
+    if (tab_=="Visual" && backend_.fieldOfView && backend_.setFieldOfView) {
+        add(CAINE_CONTROL_SLIDER,"Field of view",{},pendingFov_.value_or(backend_.fieldOfView()),60,135,CAINE_CONTROL_INTEGER,
+            [this](const std::string&,double value){if (std::isfinite(value)) pendingFov_=std::round(std::clamp(value,60.,135.));return false;});
+        view.controls.back().hint="Camera field of view in degrees. Saved by CAINE and applied to the player after loading a level.";
+    }
     heading(tab_);
     for (const auto& entry:Settings) {
         if (tab_!=entry.tab) continue;
@@ -315,15 +323,16 @@ void GameMenus::Build(MenuView& view) {
     }
     heading("Apply changes");
     button("Apply settings",[this]{
+        if (pendingFov_ && !backend_.setFieldOfView(*pendingFov_)) { message_="Could not save field of view. Check that CAINE's settings folder is writable.";return false; }
         for (const auto& [name,value]:pending_) {
             if (name=="in_mlook") backend_.command(value!=0?"+mlook\n":"-mlook\n");
             else if (name=="m_pitch") { const auto native=backend_.read("m_pitch").value_or(.022);backend_.command("m_pitch "+Number((value!=0?-1:1)*std::max(std::abs(native),.001))+"\n"); }
             else backend_.command(name+" "+Number(value)+"\n");
         }
         if (pendingMode_) { const auto& mode=*pendingMode_;backend_.command("_setvideomode "+std::to_string(mode.width)+" "+std::to_string(mode.height)+" "+std::to_string(mode.depth)+"\n"); }
-        backend_.command("host_writeconfig\n");pending_.clear();pendingMode_.reset();message_="Settings submitted to Bloodlines. Restart after changing video mode.";return false;
-    },pending_.empty() && !pendingMode_);
-    button("Discard pending changes",[this]{pending_.clear();pendingMode_.reset();message_="Pending changes discarded.";return false;},pending_.empty() && !pendingMode_);
+        backend_.command("host_writeconfig\n");pending_.clear();pendingMode_.reset();pendingFov_.reset();message_="Settings submitted to Bloodlines. Restart after changing video mode.";return false;
+    },pending_.empty() && !pendingMode_ && !pendingFov_);
+    button("Discard pending changes",[this]{pending_.clear();pendingMode_.reset();pendingFov_.reset();message_="Pending changes discarded.";return false;},pending_.empty() && !pendingMode_ && !pendingFov_);
 }
 bool GameMenus::Action(uint32_t id,const std::string& text,double number) { const auto found=actions_.find(id);return found!=actions_.end() && found->second(text,number); }
 }

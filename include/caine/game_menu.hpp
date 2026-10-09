@@ -16,6 +16,8 @@ struct GameMenuBackend {
     std::function<VideoMode()> currentMode;
     std::function<std::vector<KeyBinding>()> bindings;
     std::function<std::vector<std::string>()> keyNames;
+    std::function<double()> fieldOfView;
+    std::function<bool(double)> setFieldOfView;
 };
 std::optional<GameMenuBackend> NativeGameMenuBackend(const Module& client);
 // Read an effective loose/VPK game resource; no game content is redistributed.
@@ -37,6 +39,7 @@ private:
     void RefreshBindings();
     std::map<std::string,double> pending_;
     std::optional<VideoMode> pendingMode_;
+    std::optional<double> pendingFov_;
     std::vector<std::pair<std::string,std::string>> actionsList_;
     std::vector<std::filesystem::path> saves_;
     std::string credits_;

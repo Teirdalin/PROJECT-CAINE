@@ -5,7 +5,7 @@
 #include <windows.h>
 #include <stdint.h>
 #define CAINE_MOD_ABI_V1 1u
-#define CAINE_FRAMEWORK_VERSION 0x00030Au
+#define CAINE_FRAMEWORK_VERSION 0x00030Bu
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -62,7 +62,10 @@ typedef struct CaineMenuV1 {
 } CaineMenuV1;
 /* Copied live context, never a native object pointer or save representation.
    CP1252 game text is converted to UTF-8. The token expires on every packet,
-   closure or relinquish. A native choice is its current visible index (0..3). */
+   closure or relinquish. A native choice is its current visible index (0..3).
+   Since 0.3.11, responseCount=0 and line=-1 describe accepted player use of
+   an NPC without an interactive native packet. Opening may be empty; source
+   still identifies the NPC. Only close (-2) is valid in that context. */
 typedef struct CaineDialogueV1 {
     uint32_t size, responseCount;
     uint64_t token;

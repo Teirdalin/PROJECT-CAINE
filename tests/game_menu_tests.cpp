@@ -33,6 +33,9 @@ int main() {
         caine::GameMenuBackend backend;
         backend.read=[&](const char* name)->std::optional<double>{const auto found=values.find(name);return found==values.end()?std::nullopt:std::optional<double>(found->second);};
         backend.command=[&](const std::string& command){commands.push_back(command);};
+        double fov=90;bool fovWritable=true;
+        backend.fieldOfView=[&] { return fov; };
+        backend.setFieldOfView=[&](double value) { if (!fovWritable) return false;fov=value;return true; };
         backend.currentMode=[] { return caine::VideoMode{800,600,32}; };
         backend.modes=[] { return std::vector<caine::VideoMode>{{800,600,32},{1920,1080,32}}; };
         std::vector<caine::KeyBinding> bindings{{"MOUSE1","+attack"},{"SPACE","+attack"},{"ESCAPE","cancelselect"}};
@@ -48,6 +51,13 @@ int main() {
         build();action("Invert vertical mouse","",0);build();action("Discard pending changes");build();Check(commands.empty(),"discard changed native settings");
         action("Video");build();action("Resolution","",1);build();action("Apply settings");
         Check(commands.front()=="_setvideomode 1920 1080 32\n","native video command");commands.clear();
+        build();action("Graphics");build();
+        for (const auto& control:view.controls) if (control.label=="Field of view") Check(control.minimum==60 && control.maximum==135,"FOV slider range");
+        action("Field of view","",200);Check(fov==90,"FOV applied before confirmation");build();action("Apply settings");Check(fov==135,"FOV upper bound");commands.clear();
+        build();action("Field of view","",60);build();action("Discard pending changes");Check(fov==135,"FOV discard");
+        build();action("Field of view","",std::numeric_limits<double>::infinity());build();Check(fov==135,"nonfinite FOV");
+        action("Field of view","",120);build();fovWritable=false;action("Apply settings");Check(fov==135 && commands.empty(),"FOV save failure");
+        fovWritable=true;build();action("Apply settings");Check(fov==120,"FOV retry after save failure");commands.clear();
         build();action("Keyboard");build();action("Primary attack","F\";quit",0);Check(commands.empty(),"binding command injection");
         action("Primary attack","ESCAPE",0);Check(commands.empty(),"Escape reserved for cancellation");
         action("Primary attack","F",0);Check(commands.back()=="unbind \"MOUSE1\"\nbind \"F\" \"+attack\"\nhost_writeconfig\n","primary replacement must preserve alternative");commands.clear();bindings[0].key="F";

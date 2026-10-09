@@ -73,7 +73,7 @@ DWORD WINAPI Bootstrap(void*) {
                 Log("CAINE_CRASH_REPORTER_READY: external x86 reporter; exception context, stacks, modules, recent activity and minidumps; first-chance candidates preserve native handling");
             else Log("CAINE_CRASH_REPORTER_UNAVAILABLE: helper missing or initialization failed; native crash handling retained");
         }
-        Log("PROJECT CAINE 0.3.10 x86 starting; native loader route; mod API v1");
+        Log("PROJECT CAINE 0.3.11 x86 starting; native loader route; mod API v1");
         caine::InitializeUpdates(exe.parent_path(),config,Log);
         Log("Executable SHA256=" + caine::Sha256(exe));
         const bool skipStartup=GetPrivateProfileIntW(L"Startup",L"SkipVideos",1,config.c_str())!=0;

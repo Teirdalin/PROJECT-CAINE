@@ -1,4 +1,4 @@
-# Native interoperability and owned serialization — CAINE 0.3.8
+# Native interoperability and owned serialization — CAINE 0.3.11
 
 CAINE's bindings were independently authored from the installed Bloodlines binaries,
 their exported interfaces and installed scripts. No code, headers, reconstructed
@@ -27,6 +27,40 @@ tokens; serial-validated entity handles, server row/count, client active state a
 response text are rechecked at execution. A recycled entity or wrong thread fails
 closed. Unclaimed dialogue stays native. Native handle values are **not persistent
 identities**. No native object pointer is returned to a mod by the dialogue API.
+
+### Accepted NPC interaction (0.3.11)
+
+The independently inspected `PlayerUse` boundary at game RVA `0x167aa6` runs after
+native NPC selection and its use gate succeed. EDI identifies the base NPC entity;
+ESI identifies the player component. CAINE observes only the pressed-use bit at
+player component `+0x208c`, validates both entity serials, and gives native dialogue
+750 milliseconds to take priority. An auto-ending ambient float does not consume
+this pending interaction. Scripted uses and held-key repeats are excluded.
+
+If no visible native dialogue takes ownership, `readDialogue` returns an ambient
+context with `responseCount=0`, `line=-1`, a source filename, and an empty opening.
+The ABI structure size is unchanged. Mods consuming this mode require 0.3.11 and
+must not treat the source as permission to execute any dialogue row or quest action.
+Only close (`-2`) is accepted, and it releases the overlay without calling the
+native HUD handler. Ambient contexts expire if unclaimed; ownership, serial reuse,
+player replacement and explicit load boundaries revoke them. NPCs with no verified
+dialogue source currently retain their native interaction.
+
+### Player field of view (0.3.11)
+
+Graphics includes a staged 60–135 degree FOV slider. The installed `fov` console
+command is not a ConVar: its callback at game RVA `0xd2d80` resolves the local base
+entity through `0x1193b0`, then writes an integer at player component `+0x1e78`.
+CAINE uses that same independently verified field, after entity-handle validation,
+on the game window's render thread. It does not change cinematic camera fields.
+Apply persists the preference in `Bin/loader/CAINE/graphics.ini`; subsequent loads
+and restarts reapply it. Discard leaves it unchanged. An absent preference leaves
+the game's FOV untouched. The updater preserves this user-created configuration.
+
+Native tests execute the guarded installed interaction detour with its register
+contract and exercise ambient closure, native dialogue priority, recycled handles,
+load cancellation and the FOV field/configuration round trip. They do not establish
+full live gameplay or visual acceptance.
 
 `readScriptScalar` is a read-only CPython 2.1 adapter on the game window's thread.
 It preserves the caller's Python exception and correctly releases newly owned

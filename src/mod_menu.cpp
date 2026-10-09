@@ -4,6 +4,7 @@
 #include <caine/game_menu.hpp>
 #include <caine/intro_skip.hpp>
 #include <caine/native_menu_state.hpp>
+#include <caine/native_bridge.hpp>
 #include <shellapi.h>
 #include <algorithm>
 #include <array>
@@ -48,6 +49,7 @@ ULONGLONG lastModernFrame{};
 std::vector<caine::MenuControl> controls;
 std::vector<caine::NativeMenuItem> nativeItems;
 std::unique_ptr<caine::GameMenus> gameMenus;
+std::function<void(const std::string&)> inputCommand;
 std::string gamePageTitle;
 bool gameBridgeChecked{};
 DWORD menuThread{};
@@ -119,6 +121,7 @@ void PrepareGameBridge() {
         LocalFree(args);
     }
     gameMenus=std::make_unique<caine::GameMenus>(*backend,root,active);
+    inputCommand=backend->command;
     logger("CAINE_GAME_MENUS_READY: guarded engine settings, bindings, video modes and save/load actions");
 }
 void BuildRows() {
@@ -347,6 +350,8 @@ bool PaintGameUI(IDirect3DDevice9* device) {
     }
     if (!renderer) renderer=new MenuRenderer();
     if (!renderer->Prepare(device)) return false;
+    // Clear commands latched before this overlay captured window input.
+    if (!overlayShown && inputCommand) inputCommand("-forward\n-back\n-moveleft\n-moveright\n-left\n-right\n-attack\n-attack2\n-jump\n-duck\n-use\n");
     modernReady=true;
     MenuView view;view.overlay=true;view.wantsText=true;view.selected=owner;view.pageTitle=owner;
     for (const auto& mod:ModCatalog()) if (mod.id==owner) view.pageTitle=mod.name;
@@ -377,6 +382,7 @@ void PaintModernMenu(IDirect3DDevice9* device) {
         EnumWindows(FindGameWindow,0);
         if (gameWindow) previousProcedure=reinterpret_cast<WNDPROC>(SetWindowLongPtrW(gameWindow,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(WindowProcedure)));
     }
+    PulseNativeBridge(gameWindow);
     PaintIntroSkip(device,gameWindow,menuPainted);
     // Only the passive intro overlay can draw without a native menu paint.
     // The supported engine paints and presents on the same thread; fail closed

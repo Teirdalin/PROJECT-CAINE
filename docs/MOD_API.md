@@ -122,3 +122,9 @@ The settings provider validates and persists changes; rendering does not do it.
 See [Native interoperability](NATIVE_INTEROP.md) for copied dialogue packets,
 read-only Python/player adapters, game UI callbacks, type enumeration and owned
 serialization. Earlier descriptor sizes remain supported; new members require 0.3.8.
+
+Since 0.3.11, the shared dialogue API also exposes accepted ambient NPC interactions
+as zero responses and line -1. An opening may be empty. Such contexts allow free-text
+presentation and closure only; source identity never grants native quest actions.
+Consumers supporting this mode declare minimumFramework 0.3.11. See the native
+interoperability document for ownership and lifetime details.

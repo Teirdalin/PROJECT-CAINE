@@ -14,6 +14,8 @@ $installer=Join-Path $Package 'scripts\Install-CAINE.ps1'
 & $installer -GameRoot $lab
 '[Runtime]','Enabled=0','[Menu]','Modern=0' | Set-Content -LiteralPath "$lab\Bin\loader\CAINE\CAINE.ini"
 $configHash=Get-CaineHash "$lab\Bin\loader\CAINE\CAINE.ini"
+'[Graphics]','FieldOfView=127' | Set-Content -LiteralPath "$lab\Bin\loader\CAINE\graphics.ini"
+$graphicsHash=Get-CaineHash "$lab\Bin\loader\CAINE\graphics.ini"
 $pluginHash=Get-CaineHash "$lab\Bin\loader\CAINE.asi"
 $updaterHash=Get-CaineHash "$lab\Bin\loader\CAINE\Updater.exe"
 # Receipt-verified upgrade from pre-updater CAINE adds owned files without replacing INI.
@@ -89,6 +91,7 @@ try {
     Check ($record[1] -ceq $lab) 'Restart changed original working directory'
 } finally { $ready.Dispose() }
 Check ((Get-CaineHash "$lab\Bin\loader\CAINE\CAINE.ini") -ceq $configHash) 'Updater changed INI'
+Check ((Get-CaineHash "$lab\Bin\loader\CAINE\graphics.ini") -ceq $graphicsHash) 'Updater changed saved FOV preference'
 Check ((Get-CaineHash "$lab\Unofficial_Patch\save\untouched.sav") -ceq $saveHash) 'Updater changed save'
 Check ((Get-CaineHash "$lab\mods\Unscripted\Unscripted.dll") -ceq $modHash) 'Updater changed independent mod'
 Write-Output 'CAINE_UPDATE_DEPLOYMENT_OK: legacy upgrade, rollback, ownership, ZIP traversal, exact process wait, native helper transaction, restart arguments/cwd, save/config/mod preservation'
