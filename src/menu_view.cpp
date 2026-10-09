@@ -335,9 +335,10 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
                     if (!created && retained.observed!=control.number) retained={control.number,control.number};
                     float number=static_cast<float>(retained.value);
                     ImGui::SetNextItemWidth(std::min(360*scale,ImGui::GetContentRegionAvail().x*.58f));
-                    ImGui::SliderFloat(control.label.c_str(),&number,static_cast<float>(control.minimum),static_cast<float>(control.maximum),(control.flags&CAINE_CONTROL_INTEGER)?"%.0f":"%.2f");
+                    const bool changed=ImGui::SliderFloat(control.label.c_str(),&number,static_cast<float>(control.minimum),static_cast<float>(control.maximum),(control.flags&CAINE_CONTROL_INTEGER)?"%.0f":"%.2f");
                     retained.value=number;
-                    if (ImGui::IsItemDeactivatedAfterEdit()) emit({},number);
+                    if (control.flags&CAINE_CONTROL_LIVE) { if (changed) emit({},number); }
+                    else if (ImGui::IsItemDeactivatedAfterEdit()) emit({},number);
                 } else if (control.kind==CAINE_CONTROL_INPUT) {
                     auto& field=s.fields[fieldContext+std::to_string(control.id)+control.label];
                     field.secret=(control.flags&CAINE_CONTROL_SECRET)!=0;
@@ -395,7 +396,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
         }
         if(view.update.available && ImGui::Button("Update Available",{buttonWidth,buttonHeight}))actions.push_back({MenuActionKind::Update,{}});
         ImGui::End();ImGui::PopStyleColor(3);ImGui::PopStyleVar(2);
-        const char* version="PROJECT CAINE 0.3.11";
+        const char* version="PROJECT CAINE 0.3.12";
         const auto size=ImGui::CalcTextSize(version);
         draw->AddText({(width-size.x)/2,height-28*scale},IM_COL32(145,136,141,255),version);
     } else if (!view.pageTitle.empty()) {
@@ -491,7 +492,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
     } else ImGui::TextWrapped("Select a mod to view its details and settings.");
     ImGui::EndChild(); ImGui::Separator();
     if (ImGui::Button("Back to main menu")) actions.push_back({MenuActionKind::Close,{}});
-    ImGui::SameLine(); ImGui::TextDisabled("  ESC  /  Close     |     CAINE 0.3.11");
+    ImGui::SameLine(); ImGui::TextDisabled("  ESC  /  Close     |     CAINE 0.3.12");
     ImGui::End();
     }
     if(view.updateOpen) {

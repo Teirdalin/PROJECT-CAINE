@@ -7,7 +7,7 @@
 #include <thread>
 namespace caine {
 void TestNativeOriginals(void*,void*,void*,void*,void*,void*);
-void TestNativeInteractionOriginals(void*,void*);
+void TestNativeInteractionContinuation(void*);
 void TestExpirePendingUse();void TestNativeFovConfig(int);void TestReloadFovConfig();
 }
 namespace {
@@ -19,8 +19,6 @@ void __fastcall Paint(void*,void*) { ++paints; }
 void __fastcall Active(void*,void*,bool) {}
 void __fastcall Pick(void*,void*,int index,bool force) { ++picks;choice=index;forced=force; }
 const char* __fastcall Filename(void*,void*) { return "santa monica/jeanette.dlg"; }
-void* localEntity{};
-void* __cdecl LocalPlayer() { return localEntity; }
 __declspec(naked) void UseReturn() { __asm ret }
 __declspec(naked) void __cdecl UseEntry(void*,void*,void*) {
     __asm {
@@ -91,9 +89,13 @@ int wmain(int argc,wchar_t** argv) {
         // Execute the real installed PlayerUse boundary with its inspected EDI /
         // ESI contract. Substitute the continuation, not the production detour.
         std::array<uint8_t,0xac> playerEntity{};std::array<uint8_t,0x3000> playerComponent{};
-        localEntity=playerEntity.data();Put(playerEntity.data(),0xa8,playerComponent.data());
+        Put(playerEntity.data(),0xa8,playerComponent.data());
+        Put(playerComponent.data(),0,reinterpret_cast<uint8_t*>(game)+0x4a271c);
+        // Reproduce the live game's absence of a console-command client. No
+        // stubbed player-lookup function is used by the production resolver.
+        Put(reinterpret_cast<uint8_t*>(game),0x70b25c,UINT32_MAX);
         Put(entities.data(),24+4,playerEntity.data());
-        caine::TestNativeInteractionOriginals(reinterpret_cast<void*>(LocalPlayer),reinterpret_cast<void*>(UseReturn));
+        caine::TestNativeInteractionContinuation(reinterpret_cast<void*>(UseReturn));
         const auto window=CreateWindowExW(0,L"STATIC",L"CAINE native interaction test",0,0,0,10,10,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
         Check(window!=nullptr,"test game-thread window");
         const auto use=reinterpret_cast<uint8_t*>(game)+0x167aa6;
@@ -123,12 +125,26 @@ int wmain(int argc,wchar_t** argv) {
         caine::ClaimNativeDialogue(&owner,0,false);Check(!caine::ReadNativeDialogue(output),"ambient release reopened conversation");
         UseEntry(use,&npc,playerComponent.data());caine::InvalidateNativeDialogue();caine::TestExpirePendingUse();caine::PulseNativeBridge(window);
         Check(!caine::ReadNativeDialogue(output),"save/load boundary retained pending use");
+        UseEntry(use,&npc,playerComponent.data());caine::ClaimNativeDialogue(&owner,0,false);caine::TestExpirePendingUse();caine::PulseNativeBridge(window);
+        Check(!caine::ReadNativeDialogue(output),"mod load-boundary release retained pending use");
+        std::vector<std::string> commands;
+        auto command=[&](const std::string& text) { commands.push_back(text);Put(playerComponent.data(),0x1e78,std::stoi(text.substr(4))); };
         caine::TestNativeFovConfig(135);caine::PulseNativeBridge(window);
-        Check(*reinterpret_cast<int*>(playerComponent.data()+0x1e78)==135,"FOV applied to wrong player field");
+        Check(*reinterpret_cast<int*>(playerComponent.data()+0x1e78)==0,"FOV wrote native memory without using the console route");
+        caine::PulseNativeBridge(window,command);
+        Check(commands.back()=="fov 135\n" && *reinterpret_cast<int*>(playerComponent.data()+0x1e78)==135,"saved FOV console route");
         Check(caine::SetNativeFieldOfView(127),"FOV preference persistence");caine::TestReloadFovConfig();
-        Check(caine::NativeFieldOfView()==127,"FOV did not survive config reload");caine::PulseNativeBridge(window);
+        Check(caine::NativeFieldOfView()==127,"FOV did not survive config reload");Sleep(251);caine::PulseNativeBridge(window,command);
+        Check(commands.back()=="fov 127\n","reloaded FOV used wrong command");
         Check(*reinterpret_cast<int*>(playerComponent.data()+0x1e78)==127,"reloaded FOV preference not applied");
-        localEntity=nullptr;caine::PulseNativeBridge(window);DestroyWindow(window);
+        // Match the read-only live snapshot: player slot 1, Jack slot 950,
+        // serial zero, and the player component adapter pointing to itself.
+        caine::InvalidateNativeDialogue();entities.fill(0);
+        Put(entities.data(),12+4,playerComponent.data());Put(playerComponent.data(),0xa8,playerComponent.data());
+        Put(entities.data(),950*12+4,&npc);caine::TestNativeFovConfig(0);
+        ambient();Check(caine::ReadNativeDialogue(output) && output.playerHandle==1 && output.npcHandle==950,"actual playing layout rejected outside command context");
+        Put(entities.data(),12+4,static_cast<void*>(nullptr));caine::PulseNativeBridge(window);
+        Check(!caine::ReadNativeDialogue(output),"removed player retained ambient interaction");DestroyWindow(window);
         std::cout<<"CAINE_DIALOGUE_NATIVE_OK: installed DLL profile guards, production detours and x86 entry ABIs, UTF-8 context, native choices, serial reuse, closure/release and stale response rejection; full gameplay pending\n";return 0;
     } catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

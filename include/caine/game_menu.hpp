@@ -39,7 +39,6 @@ private:
     void RefreshBindings();
     std::map<std::string,double> pending_;
     std::optional<VideoMode> pendingMode_;
-    std::optional<double> pendingFov_;
     std::vector<std::pair<std::string,std::string>> actionsList_;
     std::vector<std::filesystem::path> saves_;
     std::string credits_;

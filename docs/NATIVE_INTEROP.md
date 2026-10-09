@@ -1,4 +1,4 @@
-# Native interoperability and owned serialization — CAINE 0.3.11
+# Native interoperability and owned serialization — CAINE 0.3.12
 
 CAINE's bindings were independently authored from the installed Bloodlines binaries,
 their exported interfaces and installed scripts. No code, headers, reconstructed
@@ -46,21 +46,34 @@ native HUD handler. Ambient contexts expire if unclaimed; ownership, serial reus
 player replacement and explicit load boundaries revoke them. NPCs with no verified
 dialogue source currently retain their native interaction.
 
-### Player field of view (0.3.11)
+In 0.3.12, gameplay player lookup uses the serial-validated entity registry at
+game RVA `0x566458` and the exact-profile player component vtable at `0x4a271c`.
+The former helper at `0x1193b0` reads the transient console-command client index
+at `0x70b25c`. Read-only inspection of the playing game found that index is -1
+outside a command callback, so the helper returned no player and blocked ambient
+conversation capture. The replacement caches a validated handle, rejects ambiguous
+players and rescans after replacement. Diagnostic logs record accepted-use button
+states, capture, rejection and ambient handoff without copying private dialogue.
 
-Graphics includes a staged 60–135 degree FOV slider. The installed `fov` console
-command is not a ConVar: its callback at game RVA `0xd2d80` resolves the local base
-entity through `0x1193b0`, then writes an integer at player component `+0x1e78`.
-CAINE uses that same independently verified field, after entity-handle validation,
-on the game window's render thread. It does not change cinematic camera fields.
-Apply persists the preference in `Bin/loader/CAINE/graphics.ini`; subsequent loads
-and restarts reapply it. Discard leaves it unchanged. An absent preference leaves
-the game's FOV untouched. The updater preserves this user-created configuration.
+### Player field of view (0.3.12)
+
+Graphics includes a live 60–135 degree FOV slider. Each changed value saves the
+preference in `Bin/loader/CAINE/graphics.ini` and submits `fov <integer>` through
+the guarded `VEngineClient006` command interface on the game window's thread.
+The installed command is not a ConVar: its callback at game RVA `0xd2d80` writes
+an integer at player component `+0x1e78`. CAINE reads that independently verified
+field to check application; it does not write the field or cinematic camera state.
+After loads and restarts, a saved preference is resubmitted at most every 250 ms
+until it matches the validated player. Discard affects staged settings only;
+live FOV changes are already saved. An absent preference leaves the game's FOV
+untouched. The updater preserves this user-created configuration.
 
 Native tests execute the guarded installed interaction detour with its register
 contract and exercise ambient closure, native dialogue priority, recycled handles,
-load cancellation and the FOV field/configuration round trip. They do not establish
-full live gameplay or visual acceptance.
+load cancellation and the FOV command/configuration round trip. The player fixture
+reproduces the actual playing entity layout with command-client index -1 and uses
+the production registry resolver, without a stubbed player helper. These tests do
+not establish full live gameplay or visual acceptance.
 
 `readScriptScalar` is a read-only CPython 2.1 adapter on the game window's thread.
 It preserves the caller's Python exception and correctly releases newly owned

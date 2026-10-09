@@ -382,7 +382,7 @@ void PaintModernMenu(IDirect3DDevice9* device) {
         EnumWindows(FindGameWindow,0);
         if (gameWindow) previousProcedure=reinterpret_cast<WNDPROC>(SetWindowLongPtrW(gameWindow,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(WindowProcedure)));
     }
-    PulseNativeBridge(gameWindow);
+    PulseNativeBridge(gameWindow,inputCommand);
     PaintIntroSkip(device,gameWindow,menuPainted);
     // Only the passive intro overlay can draw without a native menu paint.
     // The supported engine paints and presents on the same thread; fail closed

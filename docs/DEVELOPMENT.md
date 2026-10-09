@@ -11,7 +11,7 @@ The worker pins CAINE for process lifetime. Do not hot-unload it, invoke cleanup
 
 Status export `LONG WINAPI CaineGetStatus(void)`: 0 dormant/disabled, 1 starting,
 2 observing the engine, 3 disabled by configuration, -1 failed.
-`DWORD WINAPI CaineVersion(void)` returns 0x00030B (0.3.11).
+`DWORD WINAPI CaineVersion(void)` returns 0x00030C (0.3.12).
 The framework installs its guarded Mods menu on the supported client profile.
 Feature initialization can fail after creating detours; those trampolines are retained
 until process exit. Log writes are synchronized across control and callback threads.

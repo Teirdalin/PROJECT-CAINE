@@ -12,14 +12,14 @@ plugin API, modern menus, configuration, crash reports and serialization helpers
 CAINE has no AI service dependency. **Bloodlines: Unscripted** is a separate,
 optional AI mod and is not distributed by this repository or framework updater.
 
-Version **0.3.11-framework-dev** is a development prerelease. Native and renderer
+Version **0.3.12-framework-dev** is a development prerelease. Native and renderer
 regressions pass, but live gameplay acceptance remains pending. Character-creation
 crash investigation and optional Unscripted conversation acceptance are not
 claimed resolved by this release. No game binaries or unofficial SDK code are included.
 
 ## Install
 
-1. Download and extract the **PROJECT-CAINE-0.3.11-framework-dev.zip** player asset
+1. Download and extract the **PROJECT-CAINE-0.3.12-framework-dev.zip** player asset
    from [Releases](https://github.com/Teirdalin/PROJECT-CAINE/releases).
 2. Close Bloodlines and its mod selection window.
 3. Double-click **Install PROJECT CAINE.cmd** and select your **Vampire.exe**.
@@ -49,6 +49,10 @@ have primary/alternative boxes and a **Press the new key** popup. Specialized
 panels such as the character sheet retain their original style. Startup logo
 videos are skipped by default; hold Escape for 1.5 seconds during the opening
 cinematic to use the supported native skip to Jack's tutorial.
+
+Graphics offers a 60–135 degree field-of-view slider that applies immediately
+through Bloodlines' `fov` command and remembers the preference across loads
+and restarts. Other staged settings retain their Apply/Discard controls.
 
 **Update Available** appears at the bottom of the main/pause navigation when a
 newer release is ready. Clicking it downloads and verifies the update, opens

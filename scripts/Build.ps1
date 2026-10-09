@@ -17,7 +17,7 @@ if ($LASTEXITCODE) { throw 'C++ build failed.' }
 & $ctest --test-dir $build -C $Configuration --output-on-failure
 if ($LASTEXITCODE) { throw 'Native tests failed. No package created.' }
 if ($Configuration -ne 'Release') { Write-Output 'Debug build and tests passed. Use Release for packaging.'; return }
-$package = Join-Path $root ('dist\PROJECT-CAINE-0.3.11-framework-dev-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$package = Join-Path $root ('dist\PROJECT-CAINE-0.3.12-framework-dev-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 $payload = Join-Path $package 'payload\Bin\loader'
 New-Item -ItemType Directory -Force -Path "$payload\CAINE", "$package\scripts", "$package\licenses", "$package\docs" | Out-Null
 Copy-Item -LiteralPath "$root\docs\NATIVE_INTEROP.md","$root\docs\NATIVE_RECOVERY_REPORT.md","$root\docs\MOD_API.md","$root\docs\MENU_RENDERER.md","$root\docs\LONG_STRINGS.md" -Destination "$package\docs"
@@ -52,7 +52,7 @@ Copy-Item -LiteralPath "$root\third_party\imgui\LICENSE.txt" -Destination "$pack
 $files = @(Get-ChildItem -LiteralPath "$package\payload" -Recurse -File | ForEach-Object {
     @{ path=$_.FullName.Substring((Join-Path $package 'payload').Length+1).Replace('\','/'); sha256=(Get-CaineHash $_.FullName) }
 })
-@{version='0.3.11-framework-dev';architecture='x86';license='LicenseRef-JDL-1';files=$files} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath "$package\package.json" -Encoding UTF8
+@{version='0.3.12-framework-dev';architecture='x86';license='LicenseRef-JDL-1';files=$files} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath "$package\package.json" -Encoding UTF8
 & "$root\tests\deployment_tests.ps1" -Package $package -FixtureExe "$build\test-host\Release\Vampire.exe" -FixtureDll "$build\fixtures\Release\engine.dll"
 $updateZip=Join-Path $package 'PROJECT-CAINE-update.zip'
 Add-Type -AssemblyName System.IO.Compression

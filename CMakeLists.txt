@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(PROJECT_CAINE VERSION 0.3.11 LANGUAGES C CXX)
+project(PROJECT_CAINE VERSION 0.3.12 LANGUAGES C CXX)
 if(NOT WIN32 OR NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
   message(FATAL_ERROR "CAINE requires MSVC Win32 (configure with -A Win32). Bloodlines is x86.")
 endif()

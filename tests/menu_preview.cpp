@@ -67,7 +67,7 @@ int wmain(int argc, wchar_t** argv) {
                 view.pageTitle="Settings";
                 view.controls={{CAINE_CONTROL_TAB,1,0,0,"Audio"},{CAINE_CONTROL_TAB,2,0,0,"Video"},
                     {CAINE_CONTROL_TAB,3,CAINE_CONTROL_SELECTED,0,"Graphics"},
-                    {CAINE_CONTROL_SLIDER,4,CAINE_CONTROL_INTEGER,0,"Field of view",{},"Camera field of view in degrees. Saved by CAINE and applied to the player after loading a level.",135,60,135},
+                    {CAINE_CONTROL_SLIDER,4,CAINE_CONTROL_INTEGER|CAINE_CONTROL_LIVE,0,"Field of view",{},"Applies immediately through Bloodlines' fov command and is saved for future loads and restarts.",135,60,135},
                     {CAINE_CONTROL_SLIDER,5,CAINE_CONTROL_INTEGER,0,"Shadow quality",{}, {},3,0,3},
                     {CAINE_CONTROL_BUTTON,6,0,0,"Apply settings"},{CAINE_CONTROL_BUTTON,7,0,0,"Discard pending changes"}};
             }

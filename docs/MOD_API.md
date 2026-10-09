@@ -114,7 +114,8 @@ VALUE events carry the control ID in the callback's `value` argument.
 `menu->value` is a transient `CaineValueV1`: text for inputs, number for toggles
 and sliders. Copy what your asynchronous worker needs during the callback.
 Buttons, choices and tabs also emit VALUE with their ID. Input commits on
-Enter/Apply, or each edit when LIVE is set; slider changes commit on release.
+Enter/Apply, or each edit when LIVE is set. Slider changes commit on release,
+or on each changed value when LIVE is set (supported since 0.3.12).
 The settings provider validates and persists changes; rendering does not do it.
 
 ## Shared native API (0.3.8)

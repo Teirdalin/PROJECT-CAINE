@@ -21,8 +21,6 @@ using FilenameFn=const char*(__thiscall*)(void*);
 PacketFn packetOriginal{};VoidFn releaseOriginal{},paintOriginal{};
 ActiveFn activeOriginal{};PickFn pickOriginal{};
 FilenameFn filename{};
-using LocalPlayerFn=void*(__cdecl*)();
-LocalPlayerFn localPlayer{};
 void* useContinuation{};
 caine::Hooks* hooks{};
 uint8_t* gameBase{};
@@ -46,6 +44,9 @@ struct PendingUse { CaineDialogueV1 copied{};DWORD thread{};ULONGLONG captured{}
 std::optional<int> desiredFov;
 bool fovRead{};
 HWND gameWindow{};
+uint32_t playerHandle{UINT32_MAX};
+ULONGLONG lastUseDiagnostic{},lastFovCommand{};
+ULONGLONG nextPlayerScan{};
 uint64_t nextToken{};
 bool Readable(const void* address,size_t count) {
     if (!address || !count) return false;
@@ -97,8 +98,30 @@ uint32_t HandleFor(const void* object) {
     return UINT32_MAX;
 }
 void* LocalEntity() {
-    const auto entity=localPlayer?localPlayer():nullptr;
-    return Readable(entity,0xac) && HandleFor(entity)!=UINT32_MAX?entity:nullptr;
+    const auto entries=Field<const uint8_t*>(gameBase,0x566458);
+    if (!Readable(entries,8192*12)) return nullptr;
+    auto player=[&](uint32_t handle)->void* {
+        if (!HandleExists(handle)) return nullptr;
+        const auto entity=Field<void*>(entries,static_cast<size_t>(caine::native::EntityHandle{handle}.Index())*12+4);
+        if (!Readable(entity,0xac)) return nullptr;
+        const auto component=Field<void*>(entity,0xa8);
+        // This exact-profile CBasePlayer vtable was verified against the actual
+        // playing entity. +0xa8 is the base entity's player-component adapter.
+        return Readable(component,0x2094) && Field<const void*>(component,0)==gameBase+0x4a271c?entity:nullptr;
+    };
+    if (auto entity=player(playerHandle)) return entity;
+    if (GetTickCount64()<nextPlayerScan) return nullptr;
+    nextPlayerScan=GetTickCount64()+250;
+    playerHandle=UINT32_MAX;void* found{};
+    for (uint32_t i=0;i<8192;++i) {
+        if (!Field<void*>(entries,i*12+4)) continue;
+        const auto handle=(Field<uint32_t>(entries,i*12+8)<<13)|i;
+        if (auto entity=player(handle)) {
+            if (found) { playerHandle=UINT32_MAX;return nullptr; } // Single-player adapter only.
+            found=entity;playerHandle=handle;
+        }
+    }
+    return found;
 }
 bool Current() {
     if (live.ambient) return live.copied.token && live.thread==GetCurrentThreadId() &&
@@ -128,10 +151,14 @@ void Invalidate(bool all=true) { live={};++nextToken;if (all) pendingUse={}; }
 void __cdecl AcceptedUse(void* npc,void* player) noexcept {
     try {
         std::lock_guard<std::recursive_mutex> lock(mutex);
+        if (Readable(player,0x2094) && GetTickCount64()-lastUseDiagnostic>=1000) {
+            lastUseDiagnostic=GetTickCount64();
+            logger("CAINE_NPC_USE_OBSERVED: held="+std::to_string(Field<uint32_t>(player,0x2088))+" pressed="+std::to_string(Field<uint32_t>(player,0x208c))+" released="+std::to_string(Field<uint32_t>(player,0x2090)));
+        }
         if (!Readable(player,0x2094) || !(Field<uint32_t>(player,0x208c)&0x20) ||
             (live.copied.token && Current())) return;
         const auto entity=LocalEntity();
-        if (!entity || Field<void*>(entity,0xa8)!=player) return;
+        if (!entity || Field<void*>(entity,0xa8)!=player) { logger("CAINE_NPC_USE_REJECTED: accepted player is absent or ambiguous in the entity registry");return; }
         PendingUse next;auto& copy=next.copied;
         copy.npcHandle=HandleFor(npc);copy.playerHandle=HandleFor(entity);
         if (copy.npcHandle==UINT32_MAX || copy.npcHandle==copy.playerHandle) return;
@@ -232,11 +259,9 @@ bool InstallNativeBridge(const std::function<void(const std::string&)>& log) {
         const auto fileGuard=Absolute(game,{0xa1,0x80,0x36,0x9f,0x10,0x56,0x57,0x8b,0,0x8d,0x14,0x40},{1});
         if (memcmp(game.base+0xe7310,fileGuard.data(),fileGuard.size())) throw std::runtime_error("Dialogue filename helper has changed");
         filename=reinterpret_cast<FilenameFn>(game.base+0xe7310);
-        // The fov console callback resolves this entity and writes its player
-        // component +0x1e78. Verify the helper independently before calling it.
-        const std::vector<uint8_t> playerGuard{0xe8,0x46,0x5d,0xef,0xff,0x85,0xc0,0x7e,0x0a};
-        if (memcmp(game.base+0x1193b0,playerGuard.data(),playerGuard.size())) throw std::runtime_error("Local player helper has changed");
-        localPlayer=reinterpret_cast<LocalPlayerFn>(game.base+0x1193b0);
+        // The command helper at 0x1193b0 uses the transient command-client
+        // index (normally -1 outside a console callback). Gameplay must resolve
+        // the player through the serial-validated entity registry instead.
         if (!owner->InstallBatch(game,{
             {{"native.dialogue.packet",GameHash,0xe7da0,Absolute(game,{0x51,0xa1,0x80,0x36,0x9f,0x10,0x8b,0x15,0x20,0x36,0x9f,0x10},{2,8})},reinterpret_cast<void*>(Packet),reinterpret_cast<void**>(&packetOriginal)},
             {{"native.dialogue.release",GameHash,0xe5240,Absolute(game,{0xa1,0x80,0x36,0x9f,0x10,0x8b,0x15,0x20,0x36,0x9f,0x10},{1,7})},reinterpret_cast<void*>(Release),reinterpret_cast<void**>(&releaseOriginal)},
@@ -258,7 +283,7 @@ bool ClaimNativeDialogue(void* owner,uint64_t token,bool enabled) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
     if (!enabled) {
         if (live.owner && live.owner!=owner) return false;
-        if (live.ambient) { Invalidate();return true; }
+        if (live.ambient || pendingUse.captured) { Invalidate();return true; }
         live.owner=nullptr;live.pick.reset();return true;
     }
     if (!owner || !ready.load() || token!=live.copied.token || !Visible() || (live.owner && live.owner!=owner)) return false;
@@ -272,16 +297,18 @@ bool QueueNativeDialoguePick(void* owner,uint64_t token,int index) {
     live.pick=index;return true;
 }
 void InvalidateNativeDialogue() { std::lock_guard<std::recursive_mutex> lock(mutex);Invalidate(); }
-void PulseNativeBridge(HWND window) {
+void PulseNativeBridge(HWND window,const std::function<void(const std::string&)>& command) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
     if (!ready.load() || !window || GetWindowThreadProcessId(window,nullptr)!=GetCurrentThreadId()) return;
     gameWindow=window;
     if (!fovRead) NativeFieldOfView();
     const auto entity=LocalEntity();
     if (!entity) { Invalidate();return; }
-    if (desiredFov) {
+    if (desiredFov && command) {
         const auto player=Field<void*>(entity,0xa8);
-        if (Readable(player,0x1e7c)) memcpy(static_cast<uint8_t*>(player)+0x1e78,&*desiredFov,sizeof(int));
+        if (Readable(player,0x1e7c) && Field<int>(player,0x1e78)!=*desiredFov && GetTickCount64()-lastFovCommand>=250) {
+            lastFovCommand=GetTickCount64();command("fov "+std::to_string(*desiredFov)+"\n");
+        }
     }
     if (!pendingUse.captured || pendingUse.thread!=GetCurrentThreadId() || GetTickCount64()-pendingUse.captured<750) return;
     const auto candidate=pendingUse;pendingUse={};
@@ -319,9 +346,7 @@ void TestNativeOriginals(void* packet,void* release,void* paint,void* active,voi
     paintOriginal=reinterpret_cast<VoidFn>(paint);activeOriginal=reinterpret_cast<ActiveFn>(active);
     pickOriginal=reinterpret_cast<PickFn>(pick);filename=reinterpret_cast<FilenameFn>(file);
 }
-void TestNativeInteractionOriginals(void* player,void* continuation) {
-    localPlayer=reinterpret_cast<LocalPlayerFn>(player);useContinuation=continuation;
-}
+void TestNativeInteractionContinuation(void* continuation) { useContinuation=continuation; }
 void TestNativeFovConfig(int value) { fovRead=true;desiredFov=value?std::optional<int>(value):std::nullopt; }
 void TestExpirePendingUse() { if (pendingUse.captured) pendingUse.captured=GetTickCount64()-751; }
 void TestReloadFovConfig() { fovRead=false;desiredFov.reset(); }
