@@ -242,7 +242,11 @@ void __fastcall MenuClick(void* self, void*, int id) {
         }
         if (id == 5) { actions.push_back([] { Go(Page::Mods); }); return; }
         if (modernReady && modernEnabled && (id==9 || id==10 || id==13)) {
-            actions.push_back([id] { confirmAction=id==13?10:id;Go(Page::Confirm); });return;
+            int count{};const auto native=itemsOriginal(self,&count);
+            if (caine::NativeMenuState::ConfirmQuit(id,native,count)) {
+                actions.push_back([id] { confirmAction=id==13?10:id;Go(Page::Confirm); });return;
+            }
+            // Main-menu Quit has no running game to lose; use the native exit directly.
         }
         if (modernReady && gameMenus && (id==12 || id==4 || id==1 || id==3)) {
             // Loading keeps Unscripted readiness gating, like the native route.

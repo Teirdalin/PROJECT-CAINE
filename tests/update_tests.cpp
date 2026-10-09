@@ -17,11 +17,11 @@ int main(){try{
     Check(caine::TrustedUpdateUrl("https://release-assets.githubusercontent.com/a/b?token=abc"),"signed asset redirect");
     const std::string asset="{\"name\":\"PROJECT-CAINE-update.zip\",\"state\":\"uploaded\",\"size\":500,\"digest\":\"sha256:"+std::string(64,'a')+"\",\"browser_download_url\":\""+url+"\"}";
     const std::string feed="[{\"tag_name\":\"v0.3.10-framework-dev\",\"draft\":false,\"prerelease\":true,\"assets\":["+asset+"]}]";
-    Check(caine::SelectReleaseUpdate(feed,caine::UpdateVersion,true).version=="0.3.10-framework-dev","preview feed");
-    Check(caine::SelectReleaseUpdate(feed,caine::UpdateVersion,false).version.empty(),"stable excludes preview");
+    Check(caine::SelectReleaseUpdate(feed,"0.3.9-framework-dev",true).version=="0.3.10-framework-dev","preview feed");
+    Check(caine::SelectReleaseUpdate(feed,"0.3.9-framework-dev",false).version.empty(),"stable excludes preview");
     Check(caine::SelectReleaseUpdate(feed,"0.3.10-framework-dev",true).version.empty(),"no same-version update");
     auto invalid=feed;invalid.replace(invalid.find("sha256:"),7,"sha512:");bool rejected{};
-    try{caine::SelectReleaseUpdate(invalid,caine::UpdateVersion,true);}catch(...){rejected=true;}Check(rejected,"missing SHA256 must fail closed");
+    try{caine::SelectReleaseUpdate(invalid,"0.3.9-framework-dev",true);}catch(...){rejected=true;}Check(rejected,"missing SHA256 must fail closed");
     for(const auto& value:{std::wstring(L"F:\\Game Path\\"),std::wstring(L"quoted \"argument\""),std::wstring(L""),std::wstring(L"-game Unofficial_Patch")}) {
         const auto cmd=L"test.exe "+caine::QuoteUpdateArgument(value);int count{};auto args=CommandLineToArgvW(cmd.c_str(),&count);
         Check(args && count==2 && value==args[1],"Windows argument quote round trip");LocalFree(args);

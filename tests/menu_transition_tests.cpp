@@ -6,6 +6,11 @@
 void Check(bool value,const char* message) {if(!value)throw std::runtime_error(message);}
 int main() {
     try {
+        const int mainItems[]{0,1,4,10},pauseItems[]{3,4,9,11};
+        Check(!caine::NativeMenuState::ConfirmQuit(10,mainItems,4),"main-menu Quit warned about nonexistent unsaved gameplay");
+        Check(caine::NativeMenuState::ConfirmQuit(10,pauseItems,4) && caine::NativeMenuState::ConfirmQuit(13,pauseItems,4),"pause desktop exit lost its unsaved-progress guard");
+        Check(caine::NativeMenuState::ConfirmQuit(9,pauseItems,4),"pause quit-to-main lost its unsaved-progress guard");
+        Check(!caine::NativeMenuState::ConfirmQuit(10,mainItems,4),"returning to main menu retained a stale pause warning");
         std::array<uint8_t,0x2ec> native{};float alpha=83,secondary=19,target{};int pending{};
         for(const auto action:{9,10,11,-1}) {
             pending=action;memcpy(native.data()+0x2e8,&pending,4);
