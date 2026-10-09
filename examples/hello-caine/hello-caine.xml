@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mod schemaVersion="1" id="hello-caine" name="Hello CAINE" version="1.0.0" author="PROJECT CAINE"
+     dll="mod.dll" config="hello-caine.cfg" minimumFramework="0.3.0">
+  <description>Minimal independent CAINE mod that logs one startup message.</description>
+</mod>

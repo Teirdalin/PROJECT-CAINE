@@ -1,0 +1,22 @@
+/.cache/
+/build/
+/dist/
+/reports/
+/local.json
+/.vs/
+__pycache__/
+*.user
+/generated/
+/service/.venv/
+/service/runtime-data/
+
+/mods/Unscripted/generated/
+/mods/Unscripted/reports/
+/mods/Unscripted/.cache/
+/mods/Unscripted/service/.venv/
+
+# Separate optional AI product, local game content and machine-specific launchers.
+/mods/
+/content/
+/*.lnk
+/local-*.cmd

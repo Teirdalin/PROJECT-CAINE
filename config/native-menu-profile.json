@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "module": "Vampire/cl_dlls/client.dll",
+  "sha256": "9ce1a59fd3f5175a155c5276cb6d092e25a009835585a371f93b923dfc134f01",
+  "preferred_base": "0x10000000",
+  "live_accepted": false,
+  "hooks": [
+    {
+      "id": "menu.items",
+      "rva": "0x678a0",
+      "expected_hex": "e8 ab ff ff ff 85 c0 75 16",
+      "relocated_operand_offsets": []
+    },
+    {
+      "id": "menu.label",
+      "rva": "0x65eb0",
+      "expected_hex": "56 57 8b 7c 24 0c 8b 04 bd",
+      "relocated_operand_offsets": []
+    },
+    {
+      "id": "menu.dispatch",
+      "rva": "0x67610",
+      "expected_hex": "56 8b f1 57 83 be e8 02 00 00 ff",
+      "relocated_operand_offsets": []
+    },
+    {
+      "id": "menu.paint",
+      "rva": "0x65af0",
+      "expected_hex": "56 8b f1 8b 06 ff 50 58",
+      "relocated_operand_offsets": []
+    }
+  ],
+  "native_menu_helpers": {
+    "destroy_buttons": "0x66250",
+    "create_buttons": "0x65f40",
+    "layout_buttons": "0x660e0"
+  },
+  "audio": {
+    "module": "Bin/engine.dll",
+    "sha256": "9d9aa493cdb0d26820d8cc2db005f84fd74d0cefb642a2a056d95e8e405bcff5",
+    "interface": "IEngineSoundClient003",
+    "object_rva": "0x1ba920",
+    "emit_sound_vtable_offset": "0x8",
+    "local_client_index_rva": "0x315bac",
+    "dialogue_channel": 5,
+    "stop_flag": 4,
+    "dynamic_mixer_rva": "0x1310b08",
+    "dynamic_mixer_stride": "0xa0",
+    "dynamic_mixer_entries": 24,
+    "scope": "Native setup previews only; live NPC binding and lip animation pending"
+  },
+  "renderer": {
+    "module": "Bin/shaderapidx9.dll",
+    "sha256": "39dbd92d980cc969a33d7dedded57c4a77e6716917a21980e4f1ccab1858081a",
+    "rva": "0x1b2fc",
+    "expected_hex": "8b 46 1c 8b 08 50 ff 91 a8 00 00 00",
+    "hook_kind": "x86 mid-function; save GPRs and flags; continue displaced instructions",
+    "shader_object_register": "esi",
+    "device_member_offset": "0x1c",
+    "scope": "SwapBuffers after mesh flush and deactivation check, immediately before IDirect3DDevice9::EndScene",
+    "live_accepted": false
+  }
+}

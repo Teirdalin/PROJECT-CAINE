@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "module": "Vampire/dlls/vampire.dll",
+  "sha256": "996e024577290cf0c91d74fcccd144089f1db2a1f8ef207844d1fa078939c3c8",
+  "preferred_base": "0x10000000",
+  "python_module": "Bin/vampire_python21.dll",
+  "python_sha256": "9e65e6d091bfed21dd98ed0b99397c217a793e0b80be4db2fdb9bbb12b9e116d",
+  "live_accepted": false,
+  "hooks": [
+    {
+      "id": "python.readline",
+      "rva": "0x19bc80",
+      "abi": "cdecl PyObject*(PythonSaveFile*, PyObject* unused)",
+      "expected_hex": "83 ec 0c 53 56 57 33 ff 68 80 00 00 00",
+      "relocated_operand_offsets": [],
+      "evidence": "Stock reader begins with a 128-byte allocation. Growth repeatedly allocates 256 and copies only 128 while indexing beyond capacity. Exact native code reproduced data loss and guard overwrite in isolated host.",
+      "native_reader_vtable": {
+        "tell": 0,
+        "seek": 4,
+        "read": 76
+      },
+      "file_layout_bytes": {
+        "reader": 8,
+        "block_end": 12
+      },
+      "serialized_line_limit": 268436480
+    }
+  ]
+}

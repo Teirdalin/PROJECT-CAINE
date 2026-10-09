@@ -1,0 +1,5 @@
+LIBRARY "CAINE.asi"
+EXPORTS
+    CaineGetStatus=_CaineGetStatus@0
+    CaineVersion=_CaineVersion@0
+    CaineLongStringsReady=_CaineLongStringsReady@0
