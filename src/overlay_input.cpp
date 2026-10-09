@@ -50,10 +50,12 @@ void Release() {
 }
 bool Block() { if (Captured()) return true;Release();return false; }
 void __fastcall Activate(void* self,void*) {
+    if (self!=input) { activate(self);return; }
     if (!Block()) activate(self);
     else { std::lock_guard<std::recursive_mutex> lock(stateMutex);restoreActive=true; }
 }
 void __fastcall Deactivate(void* self,void*) {
+    if (self!=input) { deactivate(self);return; }
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     if (held) restoreActive=false;
 #ifndef CAINE_OVERLAY_INPUT_TEST
@@ -61,10 +63,10 @@ void __fastcall Deactivate(void* self,void*) {
 #endif
     deactivate(self);
 }
-void __fastcall Accumulate(void* self,void*) { if (!Block()) accumulate(self); }
-void __fastcall Reset(void* self,void*) { if (!Block()) reset(self); }
-void __fastcall Move(void* self,void*,void* command) { if (!Block()) move(self,command); }
-void __fastcall Buttons(void* self,void*,int mask,int state) { if (!Block()) buttons(self,mask,state); }
+void __fastcall Accumulate(void* self,void*) { if (self!=input || !Block()) accumulate(self); }
+void __fastcall Reset(void* self,void*) { if (self!=input || !Block()) reset(self); }
+void __fastcall Move(void* self,void*,void* command) { if (self!=input || !Block()) move(self,command); }
+void __fastcall Buttons(void* self,void*,int mask,int state) { if (self!=input || !Block()) buttons(self,mask,state); }
 }
 bool InstallOverlayInput(const Module& client,const std::function<void(const std::string&)>& log) {
     if (hooks) return true;
@@ -91,7 +93,8 @@ bool InstallOverlayInput(const Module& client,const std::function<void(const std
         {{"input.overlay.recenter",ClientHash,0x106310,resetBytes},reinterpret_cast<void*>(Reset),reinterpret_cast<void**>(&reset)},
         {{"input.overlay.move",ClientHash,0x1068a0,{0x83,0xec,0x1c,0x8d,0x54,0x24,0x10,0x56,0x8b,0xf1}},reinterpret_cast<void*>(Move),reinterpret_cast<void**>(&move)},
         {{"input.overlay.buttons",ClientHash,0x106340,{0x55,0x8b,0xe9,0x57,0x33,0xff,0x8b,0x45,0x4c}},reinterpret_cast<void*>(Buttons),reinterpret_cast<void**>(&buttons)}},error)) {
-        delete owner;input=nullptr;log("CAINE_OVERLAY_INPUT_UNAVAILABLE: "+error);return false;
+        if (!owner->Count()) { delete owner;input=nullptr; }
+        log("CAINE_OVERLAY_INPUT_UNAVAILABLE: "+error);return false;
     }
     hooks=owner;
     log("CAINE_OVERLAY_INPUT_READY: guarded mouse activation, polling, camera, recenter and button capture");return true;

@@ -1,6 +1,7 @@
 #include <caine/game_menu.hpp>
 #include <caine/native_bridge.hpp>
 #include <caine/logging.hpp>
+#include <caine/preferences.hpp>
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -26,6 +27,10 @@ std::string Upper(std::string text) {
     std::transform(text.begin(),text.end(),text.begin(),[](unsigned char c){return static_cast<char>(std::toupper(c));});return text;
 }
 bool Redirected(const std::filesystem::path& path) { const auto attr=GetFileAttributesW(path.c_str());return attr!=INVALID_FILE_ATTRIBUTES && (attr&FILE_ATTRIBUTE_REPARSE_POINT); }
+bool SaveHeader(const std::filesystem::path& path) {
+    std::ifstream file(path,std::ios::binary);char signature[4]{};file.read(signature,4);
+    return file && memcmp(signature,"JSAV",4)==0;
+}
 std::vector<std::filesystem::path> SaveFiles(const std::filesystem::path& active) {
     std::vector<std::pair<std::filesystem::file_time_type,std::filesystem::path>> entries;
     std::error_code error;const auto folder=active/L"save";
@@ -66,30 +71,31 @@ std::string ReadVpk(const std::filesystem::path& path,const std::string& resourc
     }
     return {};
 }
-struct Setting { const char* tab;const char* name;const char* label;double low,high;bool toggle,integer; };
+struct Setting { const char* tab;const char* name;const char* label;double low,high;bool toggle,integer;const char* hint; };
 // Names and ranges inspected in this installation's GameUI option constructors.
 const Setting Settings[]={
-    {"Audio","volume","Sound effects volume",0,1,false,false},
-    {"Audio","bgmvolume","Music volume",0,1,false,false},
-    {"Audio","cl_captions","Dialogue captions",0,1,true,true},
-    {"Audio","dsp_on","Environmental sound effects",0,1,true,true},
-    {"Audio","hisound","High quality audio",0,1,true,true},
-    {"Mouse","sensitivity","Mouse sensitivity",.1,20,false,false},
-    {"Mouse","m_pitch","Invert vertical mouse",0,1,true,true},
-    {"Mouse","m_filter","Smooth mouse input",0,1,true,true},
-    {"Mouse","in_mlook","Always use mouse look",0,1,true,true},
-    {"Gameplay","vdiscipline_allow_renewables","Renew active disciplines",0,1,true,true},
-    {"Gameplay","damage_floaters","Show floating damage numbers",0,1,true,true},
-    {"Video","cl_v_bump_mapping","Bump mapping",0,1,true,true},
-    {"Video","cl_v_lighting","Lighting quality",0,2,false,true},
-    {"Video","cl_v_image_quality","Image quality",1,4,false,true},
-    {"Visual","cl_v_combat_effects","Combat effects",0,1,true,true},
-    {"Visual","cl_v_shadows","Shadow quality",0,3,false,true},
-    {"Visual","cl_v_shadow_count","Shadow count",1,2,false,true},
-    {"Visual","cl_v_geometric_detail","Geometry detail",0,5,false,false},
-    {"Visual","cl_v_gamma","Gamma",1,3,false,false},
-    {"Visual","brightness","Brightness",0,5,false,false},
-    {"Visual","particle_scale","Particle detail",0,1,false,false}
+    {"Audio","volume","Sound effects volume",0,1,false,false,"Volume of game sound effects."},
+    {"Audio","bgmvolume","Music volume",0,1,false,false,"Volume of the original game soundtrack."},
+    {"Audio","cl_captions","Dialogue captions",0,1,true,true,"Displays the game's dialogue captions."},
+    {"Audio","dsp_on","Environmental sound effects",0,1,true,true,"Room and environment sound processing."},
+    {"Audio","hisound","High quality audio",0,1,true,true,"Native audio quality setting."},
+    {"Mouse","sensitivity","Mouse sensitivity",.1,20,false,false,"Camera sensitivity; changes apply with Apply settings."},
+    {"Mouse","m_pitch","Invert vertical mouse",0,1,true,true,"Reverses the vertical camera axis while retaining your sensitivity."},
+    {"Mouse","m_filter","Smooth mouse input",0,1,true,true,"Averages mouse input. Disable for more immediate camera response."},
+    {"Gameplay","vdiscipline_allow_renewables","Renew active disciplines",0,1,true,true,"Allows renewal of supported active disciplines."},
+    {"Gameplay","damage_floaters","Show floating damage numbers",0,1,true,true,"Displays native floating damage feedback."},
+    {"Visual","cl_v_bump_mapping","Bump mapping",0,1,true,true,"Uses surface normal detail where the original materials support it."},
+    {"Visual","cl_v_lighting","Lighting quality",0,2,false,true,"Original lighting quality. Does not add HDR or new light sources."},
+    {"Visual","cl_v_image_quality","Texture quality",1,4,false,true,"Higher values retain more texture detail. Uses the game's quality mapping; textures may require a reload."},
+    {"Visual","mat_trilinear","Trilinear texture filtering",0,1,true,true,"Blends mip levels to reduce visible transitions on distant surfaces. Saved per active game profile by CAINE."},
+    {"Visual","fps_max","Frame rate limit",30,240,false,true,"Limits the native frame loop. 60 is recommended for legacy game timing; higher limits need gameplay testing. Saved per active profile."},
+    {"Visual","cl_v_combat_effects","Combat effects",0,1,true,true,"Native visual combat effects."},
+    {"Visual","cl_v_shadows","Shadow quality",0,3,false,true,"Original shadow modes. Higher settings increase rendering cost."},
+    {"Visual","cl_v_shadow_count","Shadow count",1,2,false,true,"Original limit on dynamic shadows."},
+    {"Visual","cl_v_geometric_detail","Geometry detail",0,5,false,false,"Original geometry detail and level of detail behavior. Does not change map visibility data."},
+    {"Visual","cl_v_gamma","Gamma",1,3,false,false,"Native display gamma. Fullscreen and desktop color settings can affect its appearance."},
+    {"Visual","brightness","Brightness",0,5,false,false,"Native brightness adjustment."},
+    {"Visual","particle_scale","Particle detail",0,1,false,false,"Original particle detail. Lower values can reduce effect rendering cost."}
 };
 }
 std::optional<GameMenuBackend> NativeGameMenuBackend(const Module& client) {
@@ -106,16 +112,20 @@ std::optional<GameMenuBackend> NativeGameMenuBackend(const Module& client) {
     // These are the installed 2004 interfaces, not current Source SDK layouts.
     if ((*static_cast<uint8_t***>(cvars))[2]!=engine.base+0x43920 ||
         (*static_cast<uint8_t***>(commands))[28]!=engine.base+0x1a570 ||
+        (*static_cast<uint8_t***>(commands))[57]!=engine.base+0x1a9e0 ||
         (*static_cast<uint8_t***>(game))[5]!=engine.base+0xfbbd0 ||
         (*static_cast<uint8_t***>(game))[6]!=engine.base+0xfbbf0 ||
         (*static_cast<uint8_t***>(game))[1]!=engine.base+0xfbbb0 ||
         (*static_cast<uint8_t***>(game))[2]!=engine.base+0xfbbc0) return {};
     GameMenuBackend backend;
     backend.fieldOfView=[] { return NativeFieldOfView(); };
-    backend.read=[cvars](const char* name)->std::optional<double> {
+    backend.inGame=[commands] { using Active=bool(__thiscall*)(void*);return Method<Active>(commands,57)(commands); };
+    backend.read=[cvars,cache=std::map<std::string,uint8_t*>{}](const char* name) mutable ->std::optional<double> {
         using Find=void*(__thiscall*)(void*,const char*);
-        const auto variable=static_cast<uint8_t*>(Method<Find>(cvars,2)(cvars,name));
+        auto variable=cache[name];
+        if (!variable) variable=static_cast<uint8_t*>(Method<Find>(cvars,2)(cvars,name));
         if (!variable) return {};
+        cache[name]=variable; // registered engine ConVars live for the process
         // ConVar +4 is its registered parent. The inspected getter reads +0x28.
         const auto parent=*reinterpret_cast<uint8_t**>(variable+4);
         if (!parent) return {};
@@ -165,6 +175,10 @@ std::optional<GameMenuBackend> NativeGameMenuBackend(const Module& client) {
         }
         return result;
     };
+    for (const auto& entry:Settings) {
+        const auto value=backend.read(entry.name);
+        WriteLog(std::string("CAINE_NATIVE_SETTING_OBSERVED: name=")+entry.name+" value="+(value?Number(*value):"unavailable"));
+    }
     return backend;
 }
 std::string ReadGameMenuResource(const std::filesystem::path& root,const std::filesystem::path& active,const std::string& resource) {
@@ -180,14 +194,24 @@ std::string ReadGameMenuResource(const std::filesystem::path& root,const std::fi
     }
     return result;
 }
-GameMenus::GameMenus(GameMenuBackend backend,std::filesystem::path root,std::filesystem::path active):backend_(std::move(backend)),root_(std::move(root)),active_(std::move(active)) {}
+GameMenus::GameMenus(GameMenuBackend backend,std::filesystem::path root,std::filesystem::path active):backend_(std::move(backend)),root_(std::move(root)),active_(std::move(active)),config_(root_/L"Bin/loader/CAINE/CAINE.ini") {
+    // These engine variables are not archived by host_writeconfig. Restore only
+    // values explicitly chosen in CAINE, and only for the active -game profile.
+    const auto section=L"Graphics."+active_.filename().wstring();
+    for (const auto& entry:Settings) if (std::string(entry.name)=="fps_max" || std::string(entry.name)=="mat_trilinear") {
+        wchar_t buffer[64]{};const auto key=std::wstring(entry.name,entry.name+strlen(entry.name));
+        if (!GetPrivateProfileStringW(section.c_str(),key.c_str(),L"",buffer,64,config_.c_str())) continue;
+        wchar_t* end{};const auto value=wcstod(buffer,&end);
+        if (end!=buffer && !*end && std::isfinite(value) && value>=entry.low && value<=entry.high && backend_.read(entry.name) && backend_.command)
+            backend_.command(std::string(entry.name)+" "+Number(std::round(value))+"\n");
+    }
+}
 bool GameMenus::HasContinueSave() {
     const auto now=GetTickCount64();
     if (!continueChecked_ || now-continueChecked_>=1000) {
         continueSave_.reset();
         for (const auto& save:SaveFiles(active_)) {
-            std::ifstream file(save,std::ios::binary);char signature[4]{};file.read(signature,4);
-            if (file && memcmp(signature,"JSAV",4)==0) { continueSave_=save;break; }
+            if (SaveHeader(save)) { continueSave_=save;break; }
         }
         continueChecked_=now;
     }
@@ -201,7 +225,7 @@ bool GameMenus::ContinueLatest() {
     TraceLog("CAINE_CONTINUE_SUBMITTED: active profile's latest save");return true;
 }
 void GameMenus::RefreshBindings() {
-    const auto bindings=backend_.bindings();
+    bindings_=backend_.bindings();bindingsChecked_=GetTickCount64();const auto& bindings=bindings_;
     for (const auto& [command,label]:actionsList_) {
         (void)label;
         auto& slots=bindingSlots_[command];
@@ -245,7 +269,28 @@ void GameMenus::Open(GameMenuPage page) {
     }
     if (page==GameMenuPage::Load || page==GameMenuPage::Save) {
         saves_=SaveFiles(active_);selectedSave_.clear();saveName_.clear();continueChecked_=0;
+        if (page==GameMenuPage::Load) saves_.erase(std::remove_if(saves_.begin(),saves_.end(),[](const auto& path){return !SaveHeader(path);}),saves_.end());
     }
+}
+bool GameMenus::SubmitSave(bool saving,const std::string& name,bool confirmed) {
+    if (!CleanToken(name) || !backend_.command) { message_="Use a save name with letters, numbers, underscores or hyphens (up to 128 characters).";return false; }
+    const auto folder=active_/L"save";
+    if (Redirected(active_) || Redirected(folder)) { message_="The active save folder is redirected. No save action was submitted.";return false; }
+    std::error_code error;std::optional<std::filesystem::path> existing;
+    if (std::filesystem::is_directory(folder,error)) {
+        for (std::filesystem::directory_iterator it(folder,error),end;!error && it!=end;it.increment(error)) {
+            const auto path=it->path();
+            if (Upper(path.extension().u8string())!=".SAV" || _stricmp(path.stem().u8string().c_str(),name.c_str())!=0) continue;
+            if (Redirected(path) || !it->is_regular_file(error) || error) { message_="The selected save is inaccessible or redirected.";return false; }
+            existing=path;break;
+        }
+    }
+    if (error) { message_="Could not inspect the active save folder.";return false; }
+    if (!saving && (!existing || !SaveHeader(*existing))) { confirmSave_.clear();message_="This save was removed or is not a recognized Bloodlines save. Reopen the browser to refresh it.";return false; }
+    if (saving && (!backend_.inGame || !backend_.inGame())) { message_="Saving is available during an active game.";return false; }
+    const bool needsConfirm=saving?existing.has_value():(backend_.inGame && backend_.inGame());
+    if (needsConfirm && !confirmed) { confirmSave_=name;return false; }
+    backend_.command((saving?"save ":"load ")+name+"\n");return true;
 }
 void GameMenus::Build(MenuView& view) {
     actions_.clear();view.controls.clear();view.message=message_;uint32_t next=1;
@@ -266,7 +311,7 @@ void GameMenus::Build(MenuView& view) {
         if (!confirmSave_.empty()) {
             heading(saving?"Overwrite this save?":"Load this save?");text(confirmSave_);
             if (!saving) text("Unsaved progress will be lost.");
-            button(saving?"Overwrite save":"Load selected save",[this,saving]{backend_.command((saving?"save ":"load ")+confirmSave_+"\n");return true;});
+            button(saving?"Overwrite save":"Load selected save",[this,saving]{return SubmitSave(saving,confirmSave_,true);});
             button("Cancel",[this]{confirmSave_.clear();return false;});return;
         }
         add(CAINE_CONTROL_INPUT,"Search saves",search_,0,0,0,CAINE_CONTROL_LIVE,[this](const std::string& value,double){search_=value;return false;});
@@ -277,16 +322,22 @@ void GameMenus::Build(MenuView& view) {
         }
         if (saving) add(CAINE_CONTROL_INPUT,"Save name",saveName_,0,0,0,CAINE_CONTROL_LIVE,[this](const std::string& value,double){saveName_=value;return false;});
         button(saving?"Save game":"Load selected save",[this,saving]{
-            const auto name=saving?saveName_:selectedSave_;
-            if (!CleanToken(name)) { message_="Use a save name with letters, numbers, underscores or hyphens (up to 128 characters).";return false; }
-            if (!saving || std::any_of(saves_.begin(),saves_.end(),[&](const auto& path){return _stricmp(path.stem().u8string().c_str(),name.c_str())==0;})) { confirmSave_=name;return false; }
-            backend_.command("save "+name+"\n");return true;
+            return SubmitSave(saving,saving?saveName_:selectedSave_,false);
         },saving?saveName_.empty():selectedSave_.empty());return;
     }
     view.pageTitle="Settings";
-    for (const std::string tab:{"Audio","Mouse","Keyboard","Gameplay","Video","Visual"}) add(CAINE_CONTROL_TAB,tab=="Visual"?"Graphics":tab,{},0,0,0,tab==tab_?CAINE_CONTROL_SELECTED:0,[this,tab](const std::string&,double){tab_=tab;search_.clear();if(tab=="Keyboard")RefreshBindings();return false;});
-    heading(tab_=="Visual"?"Graphics":tab_);
+    for (const std::string tab:{"Audio","Mouse","Keyboard","Gameplay","Video","Visual","Framework"}) add(CAINE_CONTROL_TAB,tab=="Visual"?"Graphics":tab=="Video"?"Display":tab,{},0,0,0,tab==tab_?CAINE_CONTROL_SELECTED:0,[this,tab](const std::string&,double){tab_=tab;search_.clear();if(tab=="Keyboard")RefreshBindings();return false;});
+    heading(tab_=="Visual"?"Graphics":tab_=="Video"?"Display":tab_);
+    if (tab_=="Framework") {
+        for (const auto& option:FrameworkOptions()) {
+            add(option.toggle?CAINE_CONTROL_TOGGLE:CAINE_CONTROL_SLIDER,option.label,{},ReadFrameworkOption(config_,option),option.minimum,option.maximum,CAINE_CONTROL_INTEGER|CAINE_CONTROL_LIVE,
+                [this,option](const std::string&,double value){message_=WriteFrameworkOption(config_,option,value)?(option.live?"Setting applied and saved.":"Setting saved. Restart Bloodlines to apply it."):"Could not save CAINE settings. Check the installation folder's permissions.";return false;});
+            view.controls.back().hint=option.hint;
+        }
+        return;
+    }
     if (tab_=="Visual" && backend_.fieldOfView && backend_.setFieldOfView) {
+        text(RendererDescription());
         add(CAINE_CONTROL_SLIDER,"Field of view",{},backend_.fieldOfView(),60,135,CAINE_CONTROL_INTEGER|CAINE_CONTROL_LIVE,
             [this](const std::string&,double value){
                 if (std::isfinite(value)) message_=backend_.setFieldOfView(std::round(std::clamp(value,60.,135.)))?"Field of view applied and saved.":"Could not save field of view. Check that CAINE's settings folder is writable.";
@@ -302,6 +353,7 @@ void GameMenus::Build(MenuView& view) {
         add(entry.toggle?CAINE_CONTROL_TOGGLE:CAINE_CONTROL_SLIDER,entry.label,{},value,entry.low,entry.high,entry.integer?CAINE_CONTROL_INTEGER:0,[this,entry](const std::string&,double number){
             if (std::isfinite(number)) pending_[entry.name]=entry.integer?std::round(std::clamp(number,entry.low,entry.high)):std::clamp(number,entry.low,entry.high);return false;
         });
+        view.controls.back().hint=entry.hint;
     }
     if (tab_=="Video") {
         const auto current=backend_.currentMode();const auto selected=pendingMode_.value_or(current);
@@ -329,7 +381,10 @@ void GameMenus::Build(MenuView& view) {
     if (tab_=="Keyboard") {
         text("Click a Primary or Alternative box, then press the new key. Escape cancels. Assigning a key replaces its current action.");
         add(CAINE_CONTROL_INPUT,"Search actions",search_,0,0,0,CAINE_CONTROL_LIVE,[this](const std::string& value,double){search_=value;return false;});
-        const auto bindings=backend_.bindings();
+        // Key tables are 256 native calls each. Refresh once per second while
+        // browsing, and revalidate the replaced key at the actual edit.
+        if (GetTickCount64()-bindingsChecked_>=1000) RefreshBindings();
+        const auto& bindings=bindings_;
         for (const auto& [command,label]:actionsList_) {
             if (!Matches(label+" "+command,search_)) continue;
             const auto& slots=bindingSlots_[command];
@@ -366,13 +421,19 @@ void GameMenus::Build(MenuView& view) {
     }
     heading("Apply changes");
     button("Apply settings",[this]{
+        bool persistenceFailed=false;
         for (const auto& [name,value]:pending_) {
             if (name=="in_mlook") backend_.command(value!=0?"+mlook\n":"-mlook\n");
             else if (name=="m_pitch") { const auto native=backend_.read("m_pitch").value_or(.022);backend_.command("m_pitch "+Number((value!=0?-1:1)*std::max(std::abs(native),.001))+"\n"); }
             else backend_.command(name+" "+Number(value)+"\n");
+            if (name=="fps_max" || name=="mat_trilinear") {
+                const auto section=L"Graphics."+active_.filename().wstring(),key=std::wstring(name.begin(),name.end());
+                const auto number=std::to_wstring(static_cast<int>(std::round(value)));
+                persistenceFailed|=WritePrivateProfileStringW(section.c_str(),key.c_str(),number.c_str(),config_.c_str())==FALSE;
+            }
         }
         if (pendingMode_) { const auto& mode=*pendingMode_;backend_.command("_setvideomode "+std::to_string(mode.width)+" "+std::to_string(mode.height)+" "+std::to_string(mode.depth)+"\n"); }
-        backend_.command("host_writeconfig\n");pending_.clear();pendingMode_.reset();message_="Settings submitted to Bloodlines. Restart after changing video mode.";return false;
+        backend_.command("host_writeconfig\n");pending_.clear();pendingMode_.reset();message_=persistenceFailed?"Settings applied, but CAINE could not save the graphics preferences. Check folder permissions.":"Settings submitted and saved. Restart after changing display mode.";return false;
     },pending_.empty() && !pendingMode_);
     button("Discard pending changes",[this]{pending_.clear();pendingMode_.reset();message_="Pending changes discarded.";return false;},pending_.empty() && !pendingMode_);
 }

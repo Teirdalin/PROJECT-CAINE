@@ -8,7 +8,9 @@ replace these dependencies' licenses or their copyright notices.
   framework release.
 - **Dear ImGui:** vendored in `third_party/imgui/`; MIT license in
   `third_party/imgui/LICENSE.txt`, included as `licenses/DearImGui.txt` in the
-  framework release.
+  framework release. CAINE modifies the DX9 backend to retain a managed font
+  atlas, release transient draw buffers each frame, and clean up failed atlas
+  uploads. Default-pool fonts remain a fallback when managed textures are rejected.
 - **nlohmann/json:** vendored in `third_party/json/` for CAINE serialization,
   updates and the optional Bloodlines: Unscripted mod; MIT license in `third_party/json/LICENSE.MIT`,
   included as `licenses/nlohmann-json.txt` in the release packages.

@@ -1,3 +1,4 @@
 LIBRARY engine
 EXPORTS
     FixtureAdd
+    FixtureSubtract

@@ -1,4 +1,6 @@
 #include <caine/menu_view.hpp>
+#include <caine/preferences.hpp>
+#include <caine/logging.hpp>
 #include <caine/key_input.hpp>
 #include <imgui.h>
 #include <backends/imgui_impl_dx9.h>
@@ -9,10 +11,25 @@
 #include <map>
 #include <cmath>
 #include <cstring>
+#include <mutex>
 
 using Microsoft::WRL::ComPtr;
 namespace caine {
 namespace {
+std::mutex graphicsMutex;
+std::string graphicsDescription{"Renderer information becomes available after the first rendered frame."};
+void ObserveGraphics(IDirect3DDevice9* device,const D3DSURFACE_DESC& surface) {
+    ComPtr<IDirect3DSwapChain9> chain;D3DPRESENT_PARAMETERS present{};D3DCAPS9 caps{};
+    if (FAILED(device->GetDeviceCaps(&caps)) || FAILED(device->GetSwapChain(0,&chain)) || FAILED(chain->GetPresentParameters(&present))) return;
+    const auto description="Direct3D 9 | "+std::to_string(surface.Width)+" x "+std::to_string(surface.Height)+
+        (present.Windowed?" | Windowed":" | Fullscreen")+" | MSAA "+std::to_string(static_cast<unsigned>(present.MultiSampleType))+
+        " | Maximum supported anisotropy "+std::to_string(caps.MaxAnisotropy)+" | Pixel shader "+std::to_string(D3DSHADER_VERSION_MAJOR(caps.PixelShaderVersion))+"."+std::to_string(D3DSHADER_VERSION_MINOR(caps.PixelShaderVersion));
+    std::lock_guard<std::mutex> lock(graphicsMutex);
+    if (description!=graphicsDescription) {
+        graphicsDescription=description;
+        WriteLog("CAINE_RENDERER_CAPABILITIES: "+description+" presentation_interval="+std::to_string(present.PresentationInterval)+" texture_filter_caps="+std::to_string(caps.TextureFilterCaps)+" font_uploads="+std::to_string(ImGui_ImplDX9_FontUploadCount()));
+    }
+}
 ImGuiKey Key(WPARAM key) {
     switch (key) {
     case VK_TAB: return ImGuiKey_Tab;
@@ -106,7 +123,7 @@ struct MenuRenderer::State {
         size_t slot{};
         std::string context, label, candidate;
     } capture;
-    ULONGLONG last{};
+    ULONGLONG last{}, graphicsChecked{};
     bool previousText{}, resetInput{};
     struct Field {
         std::vector<char> buffer;
@@ -132,6 +149,7 @@ struct MenuRenderer::State {
     }
 };
 MenuRenderer::MenuRenderer() : state_(std::make_unique<State>()) {}
+std::string RendererDescription() { std::lock_guard<std::mutex> lock(graphicsMutex);return graphicsDescription; }
 MenuRenderer::~MenuRenderer() = default;
 bool MenuRenderer::Prepare(IDirect3DDevice9* device) {
     auto& s = *state_;
@@ -184,7 +202,7 @@ bool MenuRenderer::Prepare(IDirect3DDevice9* device) {
         if (!ImGui_ImplDX9_Init(device)) return false;
         s.device = device;
         if (!ImGui_ImplDX9_CreateDeviceObjects()) return false;
-        ImGui_ImplDX9_InvalidateDeviceObjects();
+        ImGui_ImplDX9_ReleaseFrameResources();
     }
     return true;
 }
@@ -192,6 +210,7 @@ void MenuRenderer::Input(UINT message, WPARAM value, LPARAM data) {
     if (state_->input.size() < 256) state_->input.push_back({message, value, data});
 }
 bool MenuRenderer::CapturingKey() const { return state_->capture.active; }
+unsigned MenuRenderer::FontUploads() const { if (!state_->context) return 0;ContextScope scope(state_->context);return ImGui_ImplDX9_FontUploadCount(); }
 void MenuRenderer::ClearInput() { state_->input.clear(); state_->last = 0; state_->resetInput = true; state_->ClearFields(); }
 bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAction>& actions) {
     auto& s = *state_;
@@ -203,10 +222,11 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
     auto& io = ImGui::GetIO();
     if (s.resetInput) { io.ClearInputKeys(); io.ClearEventsQueue(); s.resetInput = false; }
     const float width = static_cast<float>(surface.Width), height = static_cast<float>(surface.Height);
-    const float scale = std::clamp(std::min(width / 1280.0f, height / 900.0f), 0.70f, 1.5f);
+    const float scale = std::clamp(std::min(width / 1280.0f, height / 900.0f)*MenuScale(), 0.55f, 2.0f);
     Theme(scale); io.FontGlobalScale = scale * 20.0f / 24.0f;
     io.DisplaySize = {width, height};
     const auto now = GetTickCount64(); io.DeltaTime = s.last ? std::clamp(static_cast<float>(now - s.last) / 1000.0f, 0.001f, 0.1f) : 1.0f / 60.0f; s.last = now;
+    if (!s.graphicsChecked || now-s.graphicsChecked>=5000) { ObserveGraphics(s.device,surface);s.graphicsChecked=now; }
     POINT cursor{}; RECT client{};
     if (window && GetCursorPos(&cursor) && ScreenToClient(window, &cursor) && GetClientRect(window, &client) && client.right && client.bottom && GetForegroundWindow() == window) {
         io.AddMousePosEvent(static_cast<float>(cursor.x) * width / static_cast<float>(client.right), static_cast<float>(cursor.y) * height / static_cast<float>(client.bottom));
@@ -256,7 +276,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
         if (progress>0) draw->AddRectFilled(start,{start.x+(end.x-start.x)*progress,end.y},IM_COL32(205,64,79,255),2*scale);
         s.input.clear();io.ClearInputKeys();
         ImGui::Render();ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
-        ImGui_ImplDX9_InvalidateDeviceObjects();
+        ImGui_ImplDX9_ReleaseFrameResources();
         return true;
     }
     auto logoFor = [&](const std::filesystem::path& path) -> Logo* {
@@ -302,7 +322,10 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
                     ImGui::GetWindowDrawList()->AddText(nullptr,0,{position.x+4*scale,position.y+6*scale},ImGui::GetColorU32(ImGuiCol_Text),control.label.c_str(),nullptr,wrap);
                 } else if (control.kind==CAINE_CONTROL_TOGGLE) {
                     bool enabled=control.number!=0;
-                    if (ImGui::Checkbox(control.label.c_str(),&enabled)) emit({},enabled?1:0);
+                    bool changed=ImGui::Checkbox("##toggle",&enabled);
+                    ImGui::SameLine();ImGui::TextWrapped("%s",control.label.c_str());
+                    if (ImGui::IsItemClicked()) { enabled=!enabled;changed=true; }
+                    if (changed) emit({},enabled?1:0);
                 } else if (control.kind==MenuControlDropdown) {
                     ImGui::TextWrapped("%s",control.label.c_str());
                     ImGui::SetNextItemWidth(std::min(360*scale,ImGui::GetContentRegionAvail().x));
@@ -409,7 +432,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
         }
         if(view.update.available && ImGui::Button("Update Available",{buttonWidth,buttonHeight}))actions.push_back({MenuActionKind::Update,{}});
         ImGui::End();ImGui::PopStyleColor(3);ImGui::PopStyleVar(2);
-        const char* version="PROJECT CAINE 0.3.14";
+        const char* version="PROJECT CAINE 0.3.15";
         const auto size=ImGui::CalcTextSize(version);
         draw->AddText({(width-size.x)/2,height-28*scale},IM_COL32(145,136,141,255),version);
     } else if (view.confirmation) {
@@ -428,7 +451,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
             for (const auto& control:view.controls) if (control.kind!=CAINE_CONTROL_INPUT)
                 content+=ImGui::CalcTextSize(control.label.c_str(),nullptr,false,std::max(40.f,panel.x-2*margin-24*scale)).y+24*scale;
             const float maximum=std::min(height-2*margin,580*scale);
-            panel.y=std::clamp(content+200*scale,std::min(310*scale,maximum),maximum);
+            panel.y=std::clamp(content+225*scale,std::min(380*scale,maximum),maximum);
         }
         ImGui::GetBackgroundDrawList()->AddRectFilled({0,0},{width,height},view.overlay?IM_COL32(0,0,0,100):IM_COL32(0,0,0,255));
         ImGui::SetNextWindowPos({(width-panel.x)/2,(height-panel.y)/2},ImGuiCond_Always);
@@ -437,7 +460,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
         ImGui::SetWindowFontScale(1.3f);ImGui::TextUnformatted(view.pageTitle.c_str());ImGui::SetWindowFontScale(1);
         ImGui::Separator();
         const bool composer=view.overlay && std::any_of(view.controls.begin(),view.controls.end(),[](const auto& control){return control.kind==CAINE_CONTROL_INPUT && (control.flags&CAINE_CONTROL_SUBMIT);});
-        ImGui::BeginChild("game-menu-content",{0,std::max(30*scale,ImGui::GetContentRegionAvail().y-(composer?140:52)*scale)},ImGuiChildFlags_NavFlattened);
+        ImGui::BeginChild("game-menu-content",{0,std::max(30*scale,ImGui::GetContentRegionAvail().y-(composer?165:65)*scale)},ImGuiChildFlags_NavFlattened);
         drawControls();
         if (!view.message.empty()) { ImGui::Separator();ImGui::TextWrapped("%s",view.message.c_str()); }
         ImGui::EndChild();ImGui::Separator();
@@ -523,7 +546,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
     } else ImGui::TextWrapped("Select a mod to view its details and settings.");
     ImGui::EndChild(); ImGui::Separator();
     if (ImGui::Button("Back to main menu")) actions.push_back({MenuActionKind::Close,{}});
-    ImGui::SameLine(); ImGui::TextDisabled("  ESC  /  Close     |     CAINE 0.3.14");
+    ImGui::SameLine(); ImGui::TextDisabled("  ESC  /  Close     |     CAINE 0.3.15");
     ImGui::End();
     }
     if(view.updateOpen) {
@@ -582,8 +605,9 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
     ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
     // The renderer owns default-pool buffers only inside this frame. Bloodlines
     // can Reset/recreate its device on any of its legacy paths without extra
-    // reset hooks or outstanding UI resources. Managed logo textures survive Reset.
-    ImGui_ImplDX9_InvalidateDeviceObjects();
+    // reset hooks or outstanding default-pool resources. Managed fonts and
+    // logo textures survive Reset; fonts are uploaded once per device.
+    ImGui_ImplDX9_ReleaseFrameResources();
     return true;
 }
 }

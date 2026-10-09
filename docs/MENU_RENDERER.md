@@ -1,4 +1,4 @@
-# Modern menus (CAINE 0.3.14)
+# Modern menus (CAINE 0.3.15)
 
 CAINE draws inside Bloodlines with Dear ImGui 1.91.9b and the upstream DirectX 9
 backend. Normal startup through the native loader is retained.
@@ -19,8 +19,8 @@ falls back to another profile's saves. Mod readiness gating also applies.
 Quit from the main menu exits directly. Pause-menu quit confirmation is a
 compact centered dialog with side-by-side Quit and Cancel buttons.
 
-The modern settings pages cover Audio, Mouse, Keyboard, Gameplay, Video and
-Visual options. Ordinary settings are staged until Apply; Discard and leaving
+The modern settings pages cover Audio, Mouse, Keyboard, Gameplay, Display,
+Graphics and Framework options. Ordinary settings are staged until Apply; Discard and leaving
 the screen abandon pending changes. Resolution is a dropdown of deduplicated
 native display modes; it shows the current or pending selection. Keyboard actions
 have Primary and Alternative boxes. Clicking either opens "Press the new key";
@@ -31,12 +31,19 @@ immediately, preserving the other slot and any additional existing bindings.
 Names are checked against the game's native key table before command submission.
 Video choices are read from the engine's real mode list
 and use the installed `_setvideomode` command. Video changes may require restart.
-`host_writeconfig` persists engine settings. No launch arguments are rewritten.
+`host_writeconfig` persists archived engine settings. CAINE remembers the added
+non-archived `fps_max` and `mat_trilinear` preferences in a profile-specific INI
+section, restoring only values explicitly selected in CAINE. No launch arguments
+are rewritten. Framework preferences expose the existing runtime options with
+restart requirements, plus live 75–150% interface scaling and verbosity.
 
 Save/Load lists scan only the active `-game` folder. The browser does not rewrite
 save files: confirmed actions dispatch native save/load commands so the engine
 and Unscripted persistence hooks still own serialization. Existing save overwrites
-require confirmation, including names differing only by case; load also confirms.
+require confirmation, including names differing only by case. Main-menu load
+proceeds directly; in-game load confirms. Clicks re-enumerate saves and reject
+missing, redirected or unrecognized load files. A file created after the list
+was drawn still requires overwrite confirmation.
 New names allow ASCII letters, numbers, underscores and hyphens, up to 128 bytes.
 This build lists filenames rather than character portraits and saved map metadata.
 
@@ -82,9 +89,12 @@ lease release ownership. The native activation routine restores the previous
 mouse mode only when the game is foreground. The character sheet and other
 specialized native panels retain their own input behavior.
 
-The upstream backend restores render state. Default-pool font and geometry
-buffers are released after each visible frame so native device Reset paths can
-continue without outstanding UI resources. Managed logo textures are bounded
+The Dear ImGui backend restores render state. CAINE's small backend extension
+retains a static managed-pool font atlas across frames and native device Reset,
+avoiding a font upload on every visible frame. Devices that reject managed
+textures retain the default-pool fallback. Default-pool geometry buffers and
+fallback fonts are released after each visible frame so native device Reset
+can continue without outstanding UI resources. Managed logo textures are bounded
 to 16 MiB/4096x4096 and cached, with a limit of 64 entries. Device replacement
 clears their cache. Segoe UI is read from Windows; no external font is packaged.
 System keys and Alt-F4 stay native. Input capture expires if no modern frame

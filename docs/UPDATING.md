@@ -5,7 +5,8 @@ in a background worker at startup and every six hours. Its main and pause menus
 show **Update Available** at the bottom of the navigation list when a newer
 compatible release has a complete update asset with a GitHub SHA-256 digest.
 
-Clicking it opens download progress and begins the update. Finish saving first:
+Clicking it opens a confirmation; **Later** closes it without installation.
+**Install and Restart** starts download progress. Finish saving first:
 Bloodlines closes through its native quit action after the download is verified.
 A separate **PROJECT CAINE — Update** window displays extraction, backup,
 installation, verification and restart progress. It waits for the exact original

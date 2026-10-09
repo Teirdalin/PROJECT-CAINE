@@ -23,6 +23,9 @@ int wmain(int argc,wchar_t** argv) {
         if (mode==L"malformed") xml.pop_back();
         if (mode==L"abi") SetEnvironmentVariableW(L"CAINE_TEST_BAD_ABI",L"1");
         if (mode==L"legacy") SetEnvironmentVariableW(L"CAINE_TEST_OLD_DESCRIPTOR",L"1");
+        if (mode==L"tick-failure") SetEnvironmentVariableW(L"CAINE_TEST_TICK_FAILURE",L"1");
+        if (mode==L"game-ui-failure" || mode==L"game-ui-poll-failure") SetEnvironmentVariableW(L"CAINE_TEST_GAME_UI_FAILURE",L"1");
+        if (mode==L"game-ui-poll-failure") SetEnvironmentVariableW(L"CAINE_TEST_POLL_FAILURE",L"1");
         Write(folder/L"TestMod.xml",xml);
         Write(folder/L"TestMod.cfg",std::string("[Mod]\nEnabled=")+(mode==L"disabled"?"0":"1")+"\n[Example]\nKeep=42\n");
         if (mode==L"duplicate") {
@@ -35,7 +38,30 @@ int wmain(int argc,wchar_t** argv) {
         caine::LoadMods(root/L"mods",root,[&](const std::string& line){logs+=line+"\n";});
         auto mods=caine::ModCatalog();
         Check(mods.size()==(mode==L"duplicate" ? 2u : 1u),"catalog size");
-        if (mode==L"success" || mode==L"legacy") {
+        if (mode==L"tick-failure") {
+            Check(mods[0].active,"tick failure fixture loaded");
+            caine::TickMods();
+            Check(!caine::ModCatalog()[0].active && caine::ActiveGameUI().empty(),"failed control callback releases game UI");
+            Check(logs.find("CAINE_MOD_STOPPED")!=std::string::npos,"tick failure diagnostic");
+            const auto previous=logs;
+            caine::TickMods();Check(logs==previous,"failed tick not retried");
+            Check(add(5)==122,"failed mod stays resident while hooks may be in flight");
+        } else if (mode==L"game-ui-failure" || mode==L"game-ui-poll-failure") {
+            Check(mods[0].active,"game UI failure fixture loaded");
+            if (mode==L"game-ui-failure") {
+                Check(caine::ActiveGameUI()=="test-mod","game UI poll before failure");
+                Check(!caine::ModGameUI("test-mod",nullptr,CAINE_MENU_BUILD,0),"game UI build exception contained");
+            } else Check(caine::ActiveGameUI().empty(),"game UI poll exception contained");
+            Check(caine::ModCatalog()[0].active && caine::ModCatalog()[0].state.find("game UI failed")!=std::string::npos,"only game UI quarantined");
+            Check(caine::ActiveGameUI().empty(),"failed game UI no longer owns input");
+            const auto previous=logs;
+            for (int i=0;i<5;++i) {
+                Check(caine::ActiveGameUI().empty(),"poll stays released");
+                Check(!caine::ModGameUI("test-mod",nullptr,CAINE_MENU_BUILD,0),"failed callback not reentered");
+            }
+            Check(logs==previous,"failure does not flood per-frame logs");
+            caine::TickMods();Check(logs.find("FIXTURE_MOD_TICKED")!=std::string::npos && add(5)==122,"control work and hooks retained");
+        } else if (mode==L"success" || mode==L"legacy") {
             Check(mods[0].active && mods[0].name=="Test & Mod","metadata/registration");
             Check(add(5)==122,"guarded hook through public ABI");
             caine::TickMods(); Check(logs.find("FIXTURE_MOD_TICKED")!=std::string::npos,"tick");

@@ -1,4 +1,5 @@
 #include <caine/intro_skip.hpp>
+#include <caine/preferences.hpp>
 #include <caine/core.hpp>
 #include <caine/menu_view.hpp>
 #include <caine/logging.hpp>
@@ -78,19 +79,6 @@ void __cdecl NativeSkipCommand() noexcept {
         logger("CAINE_INTRO_SKIP_COMMAND_ACCEPTED: native skip flag set on command thread");
     } catch (...) { OutputDebugStringA("CAINE intro skip command guard failed\n"); }
 }
-std::filesystem::path ActiveFolder(const std::filesystem::path& root) {
-    auto active=root/L"Vampire";int count{};
-    const auto args=CommandLineToArgvW(GetCommandLineW(),&count);
-    if (args) {
-        for (int i=1;i+1<count;++i) if (_wcsicmp(args[i],L"-game")==0) {
-            const std::wstring name=args[i+1];
-            if (!name.empty() && name!=L"." && name!=L".." && name.find_first_of(L"\\/:")==std::wstring::npos) active=root/name;
-            break;
-        }
-        LocalFree(args);
-    }
-    return active;
-}
 }
 void InitializeIntroSkip(const std::filesystem::path& config,const std::function<void(const std::string&)>& log) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
@@ -104,7 +92,7 @@ void InitializeIntroSkip(const std::filesystem::path& config,const std::function
         client.sha256!="9ce1a59fd3f5175a155c5276cb6d092e25a009835585a371f93b923dfc134f01") {
         log("CAINE_INTRO_SKIP_UNAVAILABLE: native game/engine/client profile mismatch");return;
     }
-    const auto root=ModulePath(nullptr).parent_path(),active=ActiveFolder(root);
+    const auto root=ModulePath(nullptr).parent_path(),active=ActiveGameFolder(root);
     const auto loose=active/L"maps"/L"sp_theatre.bsp";
     const auto map=std::filesystem::exists(loose)?loose:root/L"Vampire"/L"maps"/L"sp_theatre.bsp";
     if (!IntroMapSupported(map)) { log("CAINE_INTRO_SKIP_UNAVAILABLE: opening map entity/transition contract absent");return; }

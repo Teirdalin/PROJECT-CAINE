@@ -155,6 +155,8 @@ bool Hooks::Install(const Module& module, const HookSpec& spec, void* detour, vo
     return InstallBatch(module, {{spec, detour, original}}, error);
 }
 bool Hooks::InstallBatch(const Module& module, const std::vector<HookRequest>& requests, std::string& error) {
+    // MinHook's enable queue is global, including across independent owners.
+    std::lock_guard<std::mutex> ownerLock(hookOwnerMutex);
     error.clear();
     std::string checking;
     struct Audit {
@@ -163,6 +165,7 @@ bool Hooks::InstallBatch(const Module& module, const std::vector<HookRequest>& r
     } audit{error,checking};
     TraceLog("CAINE_HOOK_BATCH_BEGIN: count="+std::to_string(requests.size())+" module_sha256="+module.sha256);
     if (requests.empty()) { error = "empty hook batch"; return false; }
+    if (Sha256(module.path)!=module.sha256) { error="module file changed after discovery";return false; }
     std::vector<Target> staged;
     // Finish all potentially throwing allocations/validation before patching or staging hooks.
     staged.reserve(requests.size());
@@ -177,8 +180,8 @@ bool Hooks::InstallBatch(const Module& module, const std::vector<HookRequest>& r
     if (!detour || spec.id.empty() || spec.moduleSha256.size() != 64 || spec.moduleSha256 != module.sha256) {
         error = "unreviewed module identity or invalid hook arguments"; return false;
     }
-    // Re-read disk identity immediately before installation, not just at discovery.
-    if (Sha256(module.path) != spec.moduleSha256) { error = "module file changed after discovery"; return false; }
+    // Disk identity is checked once for the complete batch; live bytes are
+    // independently checked for every target below.
     if (spec.expected.size() < 8 || !module.Executable(spec.rva, spec.expected.size())) {
         error = "hook target is out of range, unreadable, or not executable; eight exact bytes required"; return false;
     }
@@ -188,6 +191,9 @@ bool Hooks::InstallBatch(const Module& module, const std::vector<HookRequest>& r
     }
     for (const auto& entry : staged) if (entry.address == target || entry.id == spec.id) {
         error = "duplicate target in hook batch"; return false;
+    }
+    for (size_t i=0;i<staged.size();++i) if (requests[i].original==original) {
+        error="each hook requires a distinct trampoline output";return false;
     }
     if (std::memcmp(target, spec.expected.data(), spec.expected.size()) != 0) {
         error = "target bytes differ (build mismatch or another mod owns this entry point)"; return false;
@@ -203,10 +209,22 @@ bool Hooks::InstallBatch(const Module& module, const std::vector<HookRequest>& r
         result = MH_QueueEnableHook(staged[i].address);
         if (result != MH_OK) break;
     }
-    if (result == MH_OK) result = MH_ApplyQueued();
     if (result != MH_OK) {
-        // ApplyQueued can fail before freezing threads; no detour has run in that case.
-        // Keep any enabled hooks process-lifetime rather than free a potentially active trampoline.
+        // Nothing in this batch has run. Remove staged hooks and their queued
+        // enable requests, so another owner cannot activate a rejected batch.
+        for (size_t i=0;i<created;++i) {
+            MH_QueueDisableHook(staged[i].address);
+            MH_RemoveHook(staged[i].address);
+            *requests[i].original=nullptr;
+        }
+        error=MH_StatusToString(result);return false;
+    }
+    result = MH_ApplyQueued();
+    if (result != MH_OK) {
+        // ApplyQueued can fail midway after activating some targets. Clear all
+        // queued enables and disable these entries, retaining trampolines until
+        // the caller can guarantee that running callbacks have quiesced.
+        for (size_t i=0;i<created;++i) { MH_QueueDisableHook(staged[i].address);MH_DisableHook(staged[i].address); }
         for (size_t i = 0; i < created; ++i) targets_.push_back(std::move(staged[i]));
         error = MH_StatusToString(result);
         return false;
@@ -215,6 +233,7 @@ bool Hooks::InstallBatch(const Module& module, const std::vector<HookRequest>& r
     return true;
 }
 bool Hooks::RemoveAll(std::string& error) {
+    std::lock_guard<std::mutex> ownerLock(hookOwnerMutex);
     error.clear();
     while (!targets_.empty()) {
         const auto target = targets_.back().address;
@@ -226,5 +245,15 @@ bool Hooks::RemoveAll(std::string& error) {
         TraceLog("CAINE_HOOK_REMOVED: remaining="+std::to_string(targets_.size()));
     }
     return true;
+}
+bool Hooks::DisableAll(std::string& error) {
+    std::lock_guard<std::mutex> ownerLock(hookOwnerMutex);
+    error.clear();
+    for (const auto& target:targets_) {
+        MH_QueueDisableHook(target.address);
+        const auto status=MH_DisableHook(target.address);
+        if (status!=MH_OK && status!=MH_ERROR_DISABLED) error=MH_StatusToString(status);
+    }
+    return error.empty();
 }
 }

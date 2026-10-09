@@ -77,6 +77,7 @@ bool OpenDebugLog(const std::filesystem::path& directory,bool detail,LogBreadcru
 }
 void WriteLog(const std::string& message) noexcept { Record(message,false); }
 void TraceLog(const std::string& message) noexcept { Record(message,true); }
+void SetVerboseLogging(bool enabled) noexcept { verbose.store(enabled); }
 void CloseDebugLog() noexcept {
     try { auto& state=State();std::lock_guard<std::mutex> lock(state.mutex);ready.store(false);Close(state); }
     catch (...) {}

@@ -1,4 +1,6 @@
 #include <caine/menu_view.hpp>
+#include <caine/game_menu.hpp>
+#include <caine/preferences.hpp>
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <iostream>
@@ -51,6 +53,18 @@ int wmain(int argc, wchar_t** argv) {
             mod.description="NPC personalities, knowledge, memories, Gemini dialogue and xVASynth voices. Development build; gameplay integration is incomplete.";
             if (mode != L"empty") view.mods.push_back(mod);
             view.selected=mod.id;
+            if (mode==L"framework") {
+                caine::GameMenuBackend backend;
+                backend.read=[](const char*) { return std::optional<double>{}; };
+                backend.bindings=[] { return std::vector<caine::KeyBinding>{}; };
+                const auto temporary=std::filesystem::temp_directory_path()/("CAINE-framework-preview-"+std::to_string(GetCurrentProcessId()));
+                std::filesystem::create_directories(temporary);
+                caine::GameMenus menus(backend,temporary,temporary/"Vampire");
+                menus.Open(caine::GameMenuPage::Settings);menus.Build(view);
+                for (const auto& control:view.controls) if (control.label=="Framework") { menus.Action(control.id,{},0);break; }
+                menus.Build(view);
+                Check(caine::WriteFrameworkOption(temporary/"scale.ini",caine::FrameworkOptions().front(),150),"preview scale preference"); // maximum supported UI scale
+            }
             if (mode == L"many") for (int i=0; i<30; ++i) { mod.id="fixture"+std::to_string(i); mod.name="Example mod "+std::to_string(i+1); mod.active=false; view.mods.push_back(mod); }
             if (mode == L"settings") {
                 view.configure=true;
@@ -156,14 +170,31 @@ int wmain(int argc, wchar_t** argv) {
                 if (phase == 0) Check(SUCCEEDED(device->Reset(&pp)), "UI retained a default-pool resource across Reset");
             }
             Save(device.Get(),argv[1]);
+            Check(renderer.FontUploads()==1,"font atlas was uploaded again across frames/device Reset");
             Check(events.empty(),"UI emitted an action without input");
             if (mode == L"details" || mode==L"home" || mode==L"controls" || mode==L"bindings" || mode==L"dialogue" || mode==L"update-available") {
                 auto inputFrame = [&](UINT message, WPARAM value, LPARAM data=0) {
                     renderer.Input(message,value,data);
                     Check(SUCCEEDED(device->BeginScene()),"input BeginScene");
-                    Check(renderer.Render(nullptr,view,events),"input frame");
+                    Check(renderer.Render(mode==L"controls"?window:nullptr,view,events),"input frame");
                     Check(SUCCEEDED(device->EndScene()),"input EndScene");
                 };
+                if (mode==L"controls" && width==1280 && height==720) {
+                    // Click the visible label, beyond the checkbox's hit area.
+                    RECT client{};Check(GetClientRect(window,&client)!=FALSE,"fixture client rectangle");
+                    const auto point=MAKELPARAM(330*client.right/width,154*client.bottom/height);
+                    auto mouseFrame=[&](UINT message,WPARAM value) {
+                        renderer.Input(WM_MOUSEMOVE,0,point);
+                        inputFrame(message,value,point);
+                    };
+                    inputFrame(WM_MOUSEMOVE,0,point);
+                    mouseFrame(WM_LBUTTONDOWN,MK_LBUTTON);mouseFrame(WM_LBUTTONUP,0);
+                    Check(events.size()==1 && events[0].kind==caine::MenuActionKind::Control && events[0].value==2 && events[0].number==0,"wrapped checkbox label did not toggle");
+                    events.clear();view.controls[1].flags=CAINE_CONTROL_DISABLED;
+                    mouseFrame(WM_LBUTTONDOWN,MK_LBUTTON);mouseFrame(WM_LBUTTONUP,0);
+                    Check(events.empty(),"disabled checkbox label remained interactive");
+                    view.controls[1].flags=0;
+                }
                 if(mode==L"update-available") {
                     for(int i=0;i<14;++i) { inputFrame(WM_KEYDOWN,VK_TAB);inputFrame(WM_KEYUP,VK_TAB);inputFrame(WM_KEYDOWN,VK_SPACE);inputFrame(WM_KEYUP,VK_SPACE); }
                     bool update{};for(const auto& event:events)update|=event.kind==caine::MenuActionKind::Update;

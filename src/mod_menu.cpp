@@ -7,6 +7,7 @@
 #include <caine/native_bridge.hpp>
 #include <caine/logging.hpp>
 #include <caine/overlay_input.hpp>
+#include <caine/preferences.hpp>
 #include <shellapi.h>
 #include <algorithm>
 #include <array>
@@ -73,9 +74,9 @@ void Go(Page target) {
     page = target; dirty = true; if (renderer) renderer->ClearInput();
 }
 void Add(std::string text, std::function<void()> action = {}) {
-    const size_t limit = modernReady ? 8192 : 70;
+    const size_t limit = modernReady && modernEnabled ? 8192 : 70;
     if (text.size() > limit) text = text.substr(0,limit-3) + "...";
-    if (rows.size() < (modernReady ? 128u : 8u)) rows.push_back({std::move(text), std::move(action)});
+    if (rows.size() < (modernReady && modernEnabled ? 128u : 8u)) rows.push_back({std::move(text), std::move(action)});
 }
 void __cdecl AddModRow(void*, const char* label, uint32_t action) {
     Add(label ? label : "", action == UINT32_MAX ? std::function<void()>{} : [action] {
@@ -84,7 +85,7 @@ void __cdecl AddModRow(void*, const char* label, uint32_t action) {
     });
 }
 void __cdecl AddModControl(void*,const CaineControlV1* control) {
-    if (!modernReady || !control || control->size<sizeof(CaineControlV1) || controls.size()>=4096 || control->kind>CAINE_CONTROL_TAB) return;
+    if (!modernReady || !modernEnabled || !control || control->size<sizeof(CaineControlV1) || controls.size()>=4096 || control->kind>CAINE_CONTROL_TAB) return;
     auto copy=[](const char* value) {
         if (!value) return std::string{};
         const size_t length=strnlen_s(value,65537);
@@ -97,7 +98,7 @@ void __cdecl AddModControl(void*,const CaineControlV1* control) {
         throw std::runtime_error("GUI input exceeds its declared capacity");
     controls.push_back(std::move(item));
 }
-CaineMenuV1 View(const CaineValueV1* value=nullptr) { return {sizeof(CaineMenuV1),nullptr,AddModRow,modernReady?AddModControl:nullptr,value}; }
+CaineMenuV1 View(const CaineValueV1* value=nullptr) { return {sizeof(CaineMenuV1),nullptr,AddModRow,modernReady && modernEnabled?AddModControl:nullptr,value}; }
 void OpenConfig() {
     const auto menu=View();
     if (caine::ModMenu(selected, &menu, CAINE_MENU_OPEN, 0)) Go(Page::Configure);
@@ -116,16 +117,7 @@ void PrepareGameBridge() {
     caine::InstallOverlayInput(client,logger);
     const auto backend=caine::NativeGameMenuBackend(client);
     if (!backend) { logger("CAINE_GAME_MENUS_UNAVAILABLE: engine interface profile mismatch; native dialogs retained");return; }
-    const auto root=caine::ModulePath(nullptr).parent_path();auto active=root/L"Vampire";
-    int count{};const auto args=CommandLineToArgvW(GetCommandLineW(),&count);
-    if (args) {
-        for (int i=1;i+1<count;++i) if (_wcsicmp(args[i],L"-game")==0) {
-            const std::wstring name=args[i+1];
-            if (!name.empty() && name!=L"." && name!=L".." && name.find_first_of(L"\\/:")==std::wstring::npos) active=root/name;
-            break;
-        }
-        LocalFree(args);
-    }
+    const auto root=caine::ModulePath(nullptr).parent_path();const auto active=caine::ActiveGameFolder(root);
     gameMenus=std::make_unique<caine::GameMenus>(*backend,root,active);
     inputCommand=backend->command;
     logger("CAINE_GAME_MENUS_READY: guarded engine settings, bindings, video modes and save/load actions");
@@ -254,7 +246,7 @@ void __fastcall MenuClick(void* self, void*, int id) {
     if (logger) logger("CAINE_MENU_CLICK: native action id=" + std::to_string(id));
     if (installed.load()) {
         if (page != Page::Home) {
-            if (modernReady) return;
+            if (modernReady && modernEnabled) return;
             if (id >= 0 && static_cast<size_t>(id) < rows.size() && rows[id].action) actions.push_back(rows[id].action);
             return;
         }
@@ -272,7 +264,7 @@ void __fastcall MenuClick(void* self, void*, int id) {
             }
             // Main-menu Quit has no running game to lose; use the native exit directly.
         }
-        if (modernReady && gameMenus && (id==12 || id==4 || id==1 || id==3)) {
+        if (modernReady && modernEnabled && gameMenus && (id==12 || id==4 || id==1 || id==3)) {
             // Loading keeps Unscripted readiness gating, like the native route.
             if (id==1) { const auto blocking=caine::BlockingMod();if (!blocking.empty()) { actions.push_back([blocking]{selected=blocking;OpenConfig();});return; } }
             actions.push_back([id] { OpenGameMenu(id==12?Page::Credits:id==4?Page::Settings:id==1?Page::Load:Page::Save); });return;
@@ -364,13 +356,11 @@ void CollectOverlayControl(void* context,const CaineControlV1* value) {
     auto copy=[](const char* text) { if (!text) return std::string{};const auto count=strnlen_s(text,65537);if (count>65536) throw std::runtime_error("Overlay text exceeds capacity");return std::string(text,count); };
     output.push_back({value->kind,value->id,value->flags,value->maxBytes,copy(value->label),copy(value->text),copy(value->hint),value->number,value->minimum,value->maximum});
 }
-bool PaintGameUI(IDirect3DDevice9* device) {
+bool PaintGameUI(IDirect3DDevice9* device,const std::string& owner) {
     struct ReleaseOnFailure {
         bool rendered{};
         ~ReleaseOnFailure() { if (!rendered) CaptureOverlayInput(gameWindow,false); }
     } capture;
-    while (!overlayActions.empty()) { auto action=std::move(overlayActions.front());overlayActions.pop_front();action(); }
-    const auto owner=ActiveGameUI();
     if (owner.empty() || !gameWindow) {
         if (overlayShown) TraceLog("CAINE_OVERLAY_CLOSED: mod="+overlayMod);
         if (overlayShown && renderer) renderer->ClearInput();
@@ -421,22 +411,26 @@ void PaintModernMenu(IDirect3DDevice9* device) {
     }
     // Every frame releases capture unless an overlay successfully renders below.
     // Renewal happens before polling on the next game frame.
-    if (ActiveGameUI().empty() || !modernEnabled || (menuPainted && !(page==Page::Home && nativeBusy))) CaptureOverlayInput(gameWindow,false);
+    if (!gameWindow || GetWindowThreadProcessId(gameWindow,nullptr)!=GetCurrentThreadId()) { CaptureOverlayInput(gameWindow,false);return; }
+    while (!overlayActions.empty()) { auto action=std::move(overlayActions.front());overlayActions.pop_front();action(); }
     PulseNativeBridge(gameWindow,inputCommand);
+    const auto owner=ActiveGameUI(); // one authoritative poll after queued actions/input
+    const bool nativePanel=menuPainted && (!modernEnabled || !(page==Page::Home && nativeBusy));
+    if (owner.empty() || nativePanel) CaptureOverlayInput(gameWindow,false);
     PaintIntroSkip(device,gameWindow,menuPainted);
     // Only the passive intro overlay can draw without a native menu paint.
     // The supported engine paints and presents on the same thread; fail closed
     // on a different rendering model rather than run mod callbacks across threads.
     if (!menuPainted || GetCurrentThreadId() != menuThread || !modernEnabled) {
         menuPainted=false;modernShown=false;
-        if (modernEnabled) PaintGameUI(device);
+        if (!nativePanel) PaintGameUI(device,owner);
         return;
     }
     menuPainted = false;
     if (!renderer) renderer = new MenuRenderer();
     if (!renderer->Prepare(device)) return;
     if (!modernReady) { modernReady = true; dirty = true; logger("CAINE_MODERN_MENU_READY: DirectX 9 renderer initialized"); }
-    if (!gameWindow || (page==Page::Home && nativeBusy)) { modernShown=false;PaintGameUI(device);return; }
+    if (!gameWindow || (page==Page::Home && nativeBusy)) { modernShown=false;PaintGameUI(device,owner);return; }
     overlayShown=false;
     MenuView view;
     view.home=page==Page::Home;
@@ -498,7 +492,7 @@ void PaintModernMenu(IDirect3DDevice9* device) {
             if (!event.text.empty()) SecureZeroMemory(event.text.data(),event.text.size());
         } else actions.push_back([event] {
             switch (event.kind) {
-            case MenuActionKind::Update: updateOpen=true;RequestUpdateInstall();break;
+            case MenuActionKind::Update: updateOpen=true;break;
             case MenuActionKind::UpdateClose: if(!ReadUpdate().Busy())updateOpen=false;break;
             case MenuActionKind::UpdateInstall: RequestUpdateInstall();break;
             case MenuActionKind::Native:

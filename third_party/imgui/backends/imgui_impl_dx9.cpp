@@ -51,6 +51,8 @@ struct ImGui_ImplDX9_Data
     LPDIRECT3DVERTEXBUFFER9     pVB;
     LPDIRECT3DINDEXBUFFER9      pIB;
     LPDIRECT3DTEXTURE9          FontTexture;
+    bool                        FontTextureManaged; // CAINE: survives legacy device Reset
+    unsigned                    FontUploadCount;
     int                         VertexBufferSize;
     int                         IndexBufferSize;
     bool                        HasRgbaSupport;
@@ -377,13 +379,19 @@ static bool ImGui_ImplDX9_CreateFontsTexture()
 
     // Upload texture to graphics system
     bd->FontTexture = nullptr;
-    if (bd->pd3dDevice->CreateTexture(width, height, 1, D3DUSAGE_DYNAMIC, bd->HasRgbaSupport ? D3DFMT_A8B8G8R8 : D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &bd->FontTexture, nullptr) < 0)
+    // CAINE: managed static atlases survive Reset. Retain the original
+    // default-pool fallback for runtimes which reject managed textures.
+    bd->FontTextureManaged = SUCCEEDED(bd->pd3dDevice->CreateTexture(width, height, 1, 0, bd->HasRgbaSupport ? D3DFMT_A8B8G8R8 : D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &bd->FontTexture, nullptr));
+    if (!bd->FontTextureManaged && bd->pd3dDevice->CreateTexture(width, height, 1, D3DUSAGE_DYNAMIC, bd->HasRgbaSupport ? D3DFMT_A8B8G8R8 : D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &bd->FontTexture, nullptr) < 0)
         return false;
     D3DLOCKED_RECT tex_locked_rect;
     if (bd->FontTexture->LockRect(0, &tex_locked_rect, nullptr, 0) != D3D_OK)
-        return false;
+    {
+        bd->FontTexture->Release(); bd->FontTexture = nullptr; return false;
+    }
     ImGui_ImplDX9_CopyTextureRegion(io.Fonts->TexPixelsUseColors, (ImU32*)pixels, width * bytes_per_pixel, (ImU32*)tex_locked_rect.pBits, (int)tex_locked_rect.Pitch, width, height);
     bd->FontTexture->UnlockRect(0);
+    ++bd->FontUploadCount;
 
     // Store our identifier
     io.Fonts->SetTexID((ImTextureID)bd->FontTexture);
@@ -395,7 +403,7 @@ bool ImGui_ImplDX9_CreateDeviceObjects()
     ImGui_ImplDX9_Data* bd = ImGui_ImplDX9_GetBackendData();
     if (!bd || !bd->pd3dDevice)
         return false;
-    if (!ImGui_ImplDX9_CreateFontsTexture())
+    if (!bd->FontTexture && !ImGui_ImplDX9_CreateFontsTexture())
         return false;
     return true;
 }
@@ -408,6 +416,22 @@ void ImGui_ImplDX9_InvalidateDeviceObjects()
     if (bd->pVB) { bd->pVB->Release(); bd->pVB = nullptr; }
     if (bd->pIB) { bd->pIB->Release(); bd->pIB = nullptr; }
     if (bd->FontTexture) { bd->FontTexture->Release(); bd->FontTexture = nullptr; ImGui::GetIO().Fonts->SetTexID(0); } // We copied bd->pFontTextureView to io.Fonts->TexID so let's clear that as well.
+}
+
+// CAINE: release every transient default-pool object at frame end.
+// A managed font atlas survives Reset and is released by normal Shutdown.
+void ImGui_ImplDX9_ReleaseFrameResources()
+{
+    ImGui_ImplDX9_Data* bd = ImGui_ImplDX9_GetBackendData();
+    if (!bd || !bd->pd3dDevice) return;
+    if (!bd->FontTextureManaged) { ImGui_ImplDX9_InvalidateDeviceObjects(); return; }
+    if (bd->pVB) { bd->pVB->Release(); bd->pVB = nullptr; }
+    if (bd->pIB) { bd->pIB->Release(); bd->pIB = nullptr; }
+}
+unsigned ImGui_ImplDX9_FontUploadCount()
+{
+    ImGui_ImplDX9_Data* bd = ImGui_ImplDX9_GetBackendData();
+    return bd ? bd->FontUploadCount : 0;
 }
 
 void ImGui_ImplDX9_NewFrame()

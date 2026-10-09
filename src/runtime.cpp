@@ -10,6 +10,7 @@
 #include <caine/startup_videos.hpp>
 #include <caine/update.hpp>
 #include <caine/logging.hpp>
+#include <caine/preferences.hpp>
 #include <shellapi.h>
 #include <array>
 #include <set>
@@ -54,6 +55,7 @@ DWORD WINAPI Bootstrap(void*) {
         }
         logFile = std::filesystem::path(logRoot) / (L"CAINE-" + std::to_wstring(GetCurrentProcessId()) + L".log");
         caine::OpenDebugLog(logRoot,GetPrivateProfileIntW(L"Logging",L"Verbose",1,config.c_str())!=0,caine::CrashBreadcrumb);
+        caine::InitializeFrameworkPreferences(config);
         Log("CAINE_LOG_START: current=CAINE.log session=CAINE-"+std::to_string(GetCurrentProcessId())+".log; previous contents cleared; UTF-8 UTC timestamps, sequence, uptime and thread IDs");
         if (GetPrivateProfileIntW(L"Crash", L"Enabled", 1, config.c_str())) {
             const auto helper = config.parent_path() / L"CrashReporter.exe";
@@ -62,7 +64,7 @@ DWORD WINAPI Bootstrap(void*) {
                 Log("CAINE_CRASH_REPORTER_READY: external x86 reporter; exception context, stacks, modules, recent activity and minidumps; first-chance candidates preserve native handling");
             else Log("CAINE_CRASH_REPORTER_UNAVAILABLE: helper missing or initialization failed; native crash handling retained");
         }
-        Log("PROJECT CAINE 0.3.14 x86 starting; native loader route; mod API v1");
+        Log("PROJECT CAINE 0.3.15 x86 starting; native loader route; mod API v1");
         caine::InitializeUpdates(exe.parent_path(),config,Log);
         Log("Executable SHA256=" + caine::Sha256(exe));
         const bool skipStartup=GetPrivateProfileIntW(L"Startup",L"SkipVideos",1,config.c_str())!=0;
@@ -87,6 +89,7 @@ DWORD WINAPI Bootstrap(void*) {
             if (skipStartup && !startupAttempted && GetModuleHandleW(L"engine.dll")) {
                 startupAttempted=true;caine::InstallStartupVideoSkip(GetModuleHandleW(L"engine.dll"),Log);
             }
+            if (skipStartup && startupAttempted) caine::InstallStartupVideoSkip(GetModuleHandleW(L"engine.dll"),Log);
             for (const auto name : names) {
                 HMODULE module{};
                 if (!GetModuleHandleExW(0, name, &module)) continue;
@@ -126,7 +129,9 @@ DWORD WINAPI Bootstrap(void*) {
             }
             if (menuAttempted && !rendererAttempted && GetModuleHandleW(L"shaderapidx9.dll")) {
                 rendererAttempted = true;
-                if (modern || intro) caine::InstallMenuRenderer(Log);
+                // Plugin game UI and input routing remain available even when
+                // the player chooses the original main/pause menu appearance.
+                caine::InstallMenuRenderer(Log);
             }
             if (!ready && !warned && GetTickCount64() - started > 60000) {
                 Log("Engine not observed after 60 seconds; continuing observation without applying patches");

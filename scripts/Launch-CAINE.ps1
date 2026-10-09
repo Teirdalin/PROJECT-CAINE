@@ -3,7 +3,7 @@ param([string]$GameRoot,[ValidatePattern('^[A-Za-z0-9_-]+$')][string]$Mod = 'Uno
 $GameRoot = Get-CaineGameRoot $GameRoot
 if (!(Test-Path -LiteralPath (Join-Path $GameRoot $Mod) -PathType Container)) { throw "Mod directory missing: $Mod" }
 if (!(Test-Path -LiteralPath (Join-Path $GameRoot 'Bin\loader\CAINE.asi'))) { throw 'Install CAINE first.' }
-Assert-CaineGameStopped
+Assert-CaineGameStopped $GameRoot
 $start = New-Object Diagnostics.ProcessStartInfo
 $start.FileName = Join-Path $GameRoot 'Vampire.exe'
 $start.WorkingDirectory = $GameRoot

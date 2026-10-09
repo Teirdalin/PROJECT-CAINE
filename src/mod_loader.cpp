@@ -19,12 +19,21 @@ struct Mod {
     std::unique_ptr<caine::Hooks> hooks;
     std::map<HMODULE, caine::Module> modules;
     bool active{};
+    bool gameUIFailed{};
 };
 // Deliberately process-lifetime; no trampoline destruction under the loader lock.
 auto& mods = *new std::vector<std::unique_ptr<Mod>>();
 std::function<void(const std::string&)> logger;
 DWORD controlThread{};
 std::recursive_mutex catalogMutex;
+void FailGameUI(Mod& mod) {
+    // Keep live hooks and control work resident. Only the failed UI is quarantined;
+    // native dialogue and the input lease must be allowed to resume immediately.
+    mod.gameUIFailed = true;
+    caine::ClaimNativeDialogue(&mod, 0, false);
+    mod.info.state = "Loaded; game UI failed: restart required";
+    logger("CAINE_MOD_GAME_UI_FAILED: " + mod.id + " UI disabled; native dialogue released; restart required");
+}
 bool Redirected(const std::filesystem::path& path) {
     const auto attr = GetFileAttributesW(path.c_str());
     return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
@@ -81,7 +90,11 @@ int __cdecl ReadDialogue(void*,CaineDialogueV1* output) noexcept {
     try { return output && output->size>=sizeof(CaineDialogueV1) && caine::ReadNativeDialogue(*output); } catch (...) { return 0; }
 }
 int __cdecl ClaimDialogue(void* context,uint64_t token,int enabled) noexcept {
-    try { return caine::ClaimNativeDialogue(context,token,enabled!=0); } catch (...) { return 0; }
+    try {
+        std::lock_guard<std::recursive_mutex> lock(catalogMutex);
+        if (enabled && static_cast<Mod*>(context)->gameUIFailed) return 0;
+        return caine::ClaimNativeDialogue(context,token,enabled!=0);
+    } catch (...) { return 0; }
 }
 int __cdecl QueuePick(void* context,uint64_t token,int index) noexcept {
     try { return caine::QueueNativeDialoguePick(context,token,index); } catch (...) { return 0; }
@@ -193,6 +206,8 @@ void TickMods() {
         catch (...) {
             std::lock_guard<std::recursive_mutex> lock(catalogMutex);
             mod->active = false; mod->info.active = false; mod->info.state = "Failed: restart required";
+            mod->gameUIFailed = true;
+            ClaimNativeDialogue(mod.get(), 0, false);
             logger("CAINE_MOD_STOPPED: " + mod->id + " tick exception; restart required");
         }
     }
@@ -245,12 +260,12 @@ void PulseModMenus() {
 std::string ActiveGameUI() {
     std::lock_guard<std::recursive_mutex> lock(catalogMutex);
     static std::string previous;
-    for (auto& mod:mods) if (mod->active && mod->descriptor->size>=sizeof(CaineModV1) && mod->descriptor->gameUI) {
+    for (auto& mod:mods) if (mod->active && !mod->gameUIFailed && mod->descriptor->size>=sizeof(CaineModV1) && mod->descriptor->gameUI) {
         try { if (mod->descriptor->gameUI(nullptr,CAINE_GAMEUI_POLL,0)) {
             if (previous!=mod->id) { TraceLog("CAINE_GAME_UI_OWNER: id="+mod->id);previous=mod->id; }
             return mod->id;
         } }
-        catch (...) { logger("CAINE_MOD_GAME_UI_FAILED: "+mod->id); }
+        catch (...) { FailGameUI(*mod); }
     }
     if (!previous.empty()) { TraceLog("CAINE_GAME_UI_OWNER: released id="+previous);previous.clear(); }
     return {};
@@ -259,9 +274,9 @@ bool ModGameUI(const std::string& id,const CaineMenuV1* menu,uint32_t event,uint
     std::lock_guard<std::recursive_mutex> lock(catalogMutex);
     if (event!=CAINE_MENU_BUILD && event!=CAINE_GAMEUI_POLL)
         TraceLog("CAINE_MOD_GAME_UI_EVENT: id="+id+" event="+std::to_string(event)+" control="+std::to_string(value));
-    for (auto& mod:mods) if (mod->id==id && mod->active && mod->descriptor->size>=sizeof(CaineModV1) && mod->descriptor->gameUI) {
+    for (auto& mod:mods) if (mod->id==id && mod->active && !mod->gameUIFailed && mod->descriptor->size>=sizeof(CaineModV1) && mod->descriptor->gameUI) {
         try { return mod->descriptor->gameUI(menu,event,value)!=0; }
-        catch (...) { logger("CAINE_MOD_GAME_UI_FAILED: "+id);return false; }
+        catch (...) { FailGameUI(*mod);return false; }
     }
     return false;
 }

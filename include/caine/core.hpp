@@ -45,6 +45,8 @@ public:
     // Create/validate every trampoline before enabling any hook in this batch.
     bool InstallBatch(const Module& module, const std::vector<HookRequest>& requests, std::string& error);
     bool RemoveAll(std::string& error);
+    // Stops dispatch after partial installation; retains potentially in-flight trampolines.
+    bool DisableAll(std::string& error);
     size_t Count() const { return targets_.size(); }
 private:
     struct Target { void* address; std::string id; };

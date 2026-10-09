@@ -50,6 +50,7 @@ public:
     bool Render(HWND window, const MenuView& view, std::vector<MenuAction>& actions);
     void Input(UINT message, WPARAM value, LPARAM data = 0);
     bool CapturingKey() const;
+    unsigned FontUploads() const;
     void ClearInput();
 private:
     struct State;
@@ -57,5 +58,7 @@ private:
 };
 bool InstallMenuRenderer(const std::function<void(const std::string&)>& log);
 void ConfigureMenuRenderer(bool modern);
+// Observed from the actual device, not an assumed hardware/configuration value.
+std::string RendererDescription();
 void PaintModernMenu(IDirect3DDevice9* device);
 }

@@ -26,6 +26,11 @@ int wmain(int argc,wchar_t** argv) {
         caine::CaptureOverlayInput(window,true);
         Check(word(0x28)==0 && word(0x54)==0 && word(0x58)==0,"native deactivation must release accumulated deltas");
         activate(input);Check(word(0x28)==0,"game reactivation must be blocked during capture");
+        std::array<uint8_t,128> other{};*reinterpret_cast<void***>(other.data())=vtable.data();
+        *reinterpret_cast<int*>(other.data()+0x20)=1;
+        activate(other.data());deactivate(other.data());
+        Check(word(0x28)==0,"another CInput instance changed overlay ownership");
+        Check(recentered==1,"another CInput instance was incorrectly blocked");recentered=0;
         // The uninitialized imported interfaces would fault if these original
         // native polling/camera/recenter routines ran during an overlay.
         for (unsigned i=0;i<100;++i) {

@@ -18,6 +18,7 @@ struct GameMenuBackend {
     std::function<std::vector<std::string>()> keyNames;
     std::function<double()> fieldOfView;
     std::function<bool(double)> setFieldOfView;
+    std::function<bool()> inGame;
 };
 std::optional<GameMenuBackend> NativeGameMenuBackend(const Module& client);
 // Read an effective loose/VPK game resource; no game content is redistributed.
@@ -35,6 +36,7 @@ public:
 private:
     GameMenuBackend backend_;
     std::filesystem::path root_, active_;
+    std::filesystem::path config_;
     GameMenuPage page_{};
     std::string tab_{"Audio"}, message_, search_, selectedSave_, saveName_, confirmSave_;
     std::map<std::string,std::array<std::string,2>> bindingSlots_;
@@ -45,6 +47,9 @@ private:
     std::vector<std::filesystem::path> saves_;
     std::optional<std::filesystem::path> continueSave_;
     ULONGLONG continueChecked_{};
+    std::vector<KeyBinding> bindings_;
+    ULONGLONG bindingsChecked_{};
+    bool SubmitSave(bool saving, const std::string& name, bool confirmed);
     std::string credits_;
     std::map<uint32_t,std::function<bool(const std::string&,double)>> actions_;
 };

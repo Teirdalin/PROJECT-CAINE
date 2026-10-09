@@ -156,6 +156,7 @@ void Invalidate(bool all=true,const char* reason="native state changed") {
 // PlayerUse has already selected and accepted this NPC. EDI is its base entity;
 // ESI is the player's component. We observe the press edge, never scripted Use.
 void __cdecl AcceptedUse(void* npc,void* player) noexcept {
+    if (!ready.load()) return;
     try {
         std::lock_guard<std::recursive_mutex> lock(mutex);
         if (!Readable(player,0x2094)) { caine::TraceLog("CAINE_NPC_USE_REJECTED: unreadable player component");return; }
@@ -216,18 +217,22 @@ void Capture(void* self,void* packet) {
 }
 void __fastcall Packet(void* self,void*,void* packet) {
     packetOriginal(self,packet);
+    if (!ready.load()) return;
     try { std::lock_guard<std::recursive_mutex> lock(mutex);Capture(self,packet); }
     catch (...) { std::lock_guard<std::recursive_mutex> lock(mutex);Invalidate();logger("CAINE_NATIVE_DIALOGUE_REJECTED: invalid native packet"); }
 }
 void __fastcall Release(void* self,void*) {
+    if (!ready.load()) { releaseOriginal(self);return; }
     { std::lock_guard<std::recursive_mutex> lock(mutex);if (live.dialog==self) Invalidate(false,"native dialogue released"); }
     releaseOriginal(self);
 }
 void __fastcall Active(void* self,void*,bool enabled) {
+    if (!ready.load()) { activeOriginal(self,enabled);return; }
     { std::lock_guard<std::recursive_mutex> lock(mutex);if (!enabled && !live.ambient && live.hud==self) Invalidate(false,"native HUD closed"); }
     activeOriginal(self,enabled);
 }
 void __fastcall Paint(void* self,void*) {
+    if (!ready.load()) { paintOriginal(self);return; }
     bool suppress=false;
     try {
         std::lock_guard<std::recursive_mutex> lock(mutex);
@@ -245,6 +250,7 @@ void __fastcall Paint(void* self,void*) {
     if (!suppress) paintOriginal(self);
 }
 void __fastcall Pick(void* self,void*,int index,bool force) {
+    if (!ready.load()) { pickOriginal(self,index,force);return; }
     { std::lock_guard<std::recursive_mutex> lock(mutex);try { if (!live.ambient && live.owner && live.hud==self && Visible()) return; } catch (...) { Invalidate(); } }
     pickOriginal(self,index,force);
 }
@@ -260,21 +266,26 @@ bool InstallNativeBridge(const std::function<void(const std::string&)>& log) {
     try {
         const auto game=Module::Inspect(GetModuleHandleW(L"vampire.dll")),client=Module::Inspect(GetModuleHandleW(L"client.dll"));
         if (game.sha256!=GameHash || client.sha256!=ClientHash) throw std::runtime_error("Unsupported native dialogue profile");
-        gameBase=game.base;logger=log;auto owner=new Hooks();std::string error;
+        gameBase=game.base;logger=log;std::string error;
         const auto fileGuard=Absolute(game,{0xa1,0x80,0x36,0x9f,0x10,0x56,0x57,0x8b,0,0x8d,0x14,0x40},{1});
         if (memcmp(game.base+0xe7310,fileGuard.data(),fileGuard.size())) throw std::runtime_error("Dialogue filename helper has changed");
         filename=reinterpret_cast<FilenameFn>(game.base+0xe7310);
+        auto owner=new Hooks();
         // The command helper at 0x1193b0 uses the transient command-client
         // index (normally -1 outside a console callback). Gameplay must resolve
         // the player through the serial-validated entity registry instead.
         if (!owner->InstallBatch(game,{
             {{"native.dialogue.packet",GameHash,0xe7da0,Absolute(game,{0x51,0xa1,0x80,0x36,0x9f,0x10,0x8b,0x15,0x20,0x36,0x9f,0x10},{2,8})},reinterpret_cast<void*>(Packet),reinterpret_cast<void**>(&packetOriginal)},
             {{"native.dialogue.release",GameHash,0xe5240,Absolute(game,{0xa1,0x80,0x36,0x9f,0x10,0x8b,0x15,0x20,0x36,0x9f,0x10},{1,7})},reinterpret_cast<void*>(Release),reinterpret_cast<void**>(&releaseOriginal)},
-            {{"native.npc.player_use",GameHash,0x167aa6,Absolute(game,{0xc7,0x85,0x30,0x1b,0,0,0x74,0x64,0x58,0x10,0xc7,0x85,0x34,0x1b,0,0,0x08,0x15,0,0},{6})},reinterpret_cast<void*>(BeforeNPCInteraction),&useContinuation}},error)) { delete owner;throw std::runtime_error(error); }
+            {{"native.npc.player_use",GameHash,0x167aa6,Absolute(game,{0xc7,0x85,0x30,0x1b,0,0,0x74,0x64,0x58,0x10,0xc7,0x85,0x34,0x1b,0,0,0x08,0x15,0,0},{6})},reinterpret_cast<void*>(BeforeNPCInteraction),&useContinuation}},error)) { if (!owner->Count()) delete owner;throw std::runtime_error(error); }
         if (!owner->InstallBatch(client,{
             {{"native.dialogue.paint",ClientHash,0x534d0,Absolute(client,{0xa1,0x28,0x31,0x1e,0x10,0x8b,0x15,0x24,0x31,0x1e,0x10},{1,7})},reinterpret_cast<void*>(Paint),reinterpret_cast<void**>(&paintOriginal)},
             {{"native.dialogue.active",ClientHash,0x55360,Absolute(client,{0xa1,0x28,0x31,0x1e,0x10,0x8b,0x15,0x24,0x31,0x1e,0x10},{1,7})},reinterpret_cast<void*>(Active),reinterpret_cast<void**>(&activeOriginal)},
-            {{"native.dialogue.pick",ClientHash,0x549f0,Absolute(client,{0x83,0xec,0x20,0xa1,0x28,0x31,0x1e,0x10,0x8b,0x15,0x24,0x31,0x1e,0x10},{4,10})},reinterpret_cast<void*>(Pick),reinterpret_cast<void**>(&pickOriginal)}},error)) { owner->RemoveAll(error);delete owner;throw std::runtime_error(error); }
+            {{"native.dialogue.pick",ClientHash,0x549f0,Absolute(client,{0x83,0xec,0x20,0xa1,0x28,0x31,0x1e,0x10,0x8b,0x15,0x24,0x31,0x1e,0x10},{4,10})},reinterpret_cast<void*>(Pick),reinterpret_cast<void**>(&pickOriginal)}},error)) {
+                const auto failure=error;owner->DisableAll(error); // no freeing on a live initialization path
+                if (!error.empty()) log("CAINE_NATIVE_BRIDGE_DISABLE_FAILED: "+error);
+                throw std::runtime_error(failure);
+            }
         hooks=owner;ready.store(true);log("CAINE_NATIVE_BRIDGE_READY: accepted NPC use, native dialogue priority, serial-validated handles, deferred choices and player FOV; gameplay acceptance pending");return true;
     } catch (const std::exception& failure) { log(std::string("CAINE_NATIVE_BRIDGE_UNAVAILABLE: ")+failure.what());return false; }
 }

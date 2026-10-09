@@ -40,6 +40,8 @@ int main() {
         Check(caine::OpenDebugLog(root,false),"restart log");
         caine::TraceLog("HIDDEN_TRACE");caine::WriteLog("NEW_START_ONLY");
         const auto fresh=Read(current);Check(fresh.find("NEW_START_ONLY")!=std::string::npos && fresh.find("WORKER:")==std::string::npos && fresh.find("HIDDEN_TRACE")==std::string::npos && fresh==Read(session),"restart/reset or verbosity failed");
+        caine::SetVerboseLogging(true);caine::TraceLog("LIVE_TRACE_ON");caine::SetVerboseLogging(false);caine::TraceLog("LIVE_TRACE_OFF");caine::WriteLog("ERRORS_STILL_VISIBLE");
+        const auto live=Read(current);Check(live.find("LIVE_TRACE_ON")!=std::string::npos && live.find("LIVE_TRACE_OFF")==std::string::npos && live.find("ERRORS_STILL_VISIBLE")!=std::string::npos,"live verbosity changed mandatory diagnostics");
         caine::CloseDebugLog();
         const auto lock=CreateFileW(current.c_str(),GENERIC_WRITE,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
         Check(lock!=INVALID_HANDLE_VALUE,"current log lock");

@@ -9,6 +9,7 @@ using LogBreadcrumb=void(*)(const char*) noexcept;
 bool OpenDebugLog(const std::filesystem::path& directory,bool verbose=true,LogBreadcrumb breadcrumb=nullptr) noexcept;
 void WriteLog(const std::string& message) noexcept;
 void TraceLog(const std::string& message) noexcept;
+void SetVerboseLogging(bool enabled) noexcept;
 // Controlled tests only. Never called from DllMain or while hooks are executing.
 void CloseDebugLog() noexcept;
 }

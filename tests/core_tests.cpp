@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
+#include <MinHook.h>
 
 using Add = int (__cdecl*)(int);
 Add original{};
@@ -43,6 +44,20 @@ int wmain(int argc, wchar_t** argv) {
         bad = spec; bad.rva = 0;
         Require(!hooks.Install(module, bad, reinterpret_cast<void*>(Detour), reinterpret_cast<void**>(&original), error), "non executable header rejected");
         Require(add(5) == 22 && hooks.Count() == 0, "failed hooks leave function untouched");
+        const auto subtract=reinterpret_cast<Add>(GetProcAddress(fixture,"FixtureSubtract"));
+        Require(subtract && subtract(5)==6,"second fixture function");
+        const auto secondBytes=reinterpret_cast<uint8_t*>(subtract);
+        caine::HookSpec secondSpec{"fixture.subtract",module.sha256,static_cast<size_t>(secondBytes-module.base),{secondBytes,secondBytes+12}};
+        void* otherOriginal{};Add stagedOriginal{};
+        Require(!hooks.InstallBatch(module,{{spec,reinterpret_cast<void*>(Detour),reinterpret_cast<void**>(&stagedOriginal)},
+            {secondSpec,reinterpret_cast<void*>(Detour),reinterpret_cast<void**>(&stagedOriginal)}},error),"aliased trampoline outputs must be rejected before installation");
+        Require(add(5)==22 && subtract(5)==6,"aliased output validation modified native code");
+        Require(MH_CreateHook(reinterpret_cast<void*>(subtract),reinterpret_cast<void*>(Detour),&otherOriginal)==MH_OK,"stage another owner's disabled hook");
+        Require(!hooks.InstallBatch(module,{{spec,reinterpret_cast<void*>(Detour),reinterpret_cast<void**>(&stagedOriginal)},
+            {secondSpec,reinterpret_cast<void*>(Detour),reinterpret_cast<void**>(&original)}},error),"partial creation conflict must reject batch");
+        Require(hooks.Count()==0 && stagedOriginal==nullptr,"failed batch leaked queued hook or dangling trampoline");
+        Require(MH_ApplyQueued()==MH_OK && add(5)==22 && subtract(5)==6,"subsequent queue apply activated rejected hooks");
+        Require(MH_RemoveHook(reinterpret_cast<void*>(subtract))==MH_OK,"remove other owner's fixture hook");
         Require(hooks.Install(module, spec, reinterpret_cast<void*>(Detour), reinterpret_cast<void**>(&original), error), error.c_str());
         Require(add(5) == 122 && original(5) == 22, "real detour and trampoline");
         {
