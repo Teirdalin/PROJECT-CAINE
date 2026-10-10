@@ -10,6 +10,7 @@
 namespace caine {
 namespace {
 std::atomic<float> menuScale{1.f};
+std::atomic<bool> meleeEnabled{},meleeBody{true};
 bool SafeFile(const std::filesystem::path& file) {
     for (auto part=file; !part.empty(); part=part.parent_path()) {
         const auto attributes=GetFileAttributesW(part.c_str());
@@ -21,6 +22,8 @@ bool SafeFile(const std::filesystem::path& file) {
 void Apply(const FrameworkOption& option,double value) {
     if (std::string(option.id)=="scale") menuScale.store(static_cast<float>(value)/100.f);
     if (std::string(option.id)=="verbose") SetVerboseLogging(value!=0);
+    if (std::string(option.id)=="first_person_melee") meleeEnabled.store(value!=0);
+    if (std::string(option.id)=="melee_body_camera") meleeBody.store(value!=0);
 }
 }
 const std::vector<FrameworkOption>& FrameworkOptions() {
@@ -46,6 +49,15 @@ double ReadFrameworkOption(const std::filesystem::path& config,const FrameworkOp
     wchar_t* end{};const auto value=wcstod(buffer,&end);
     return end!=buffer && !*end && std::isfinite(value)?std::clamp(std::round(value),option.minimum,option.maximum):option.initial;
 }
+const std::vector<FrameworkOption>& GameplayOptions() {
+    static const std::vector<FrameworkOption> options{
+        {"first_person_melee",L"Gameplay",L"FirstPersonMelee","First Person Melee","Opt-in. Keeps ordinary melee at eye level when you prefer first person. Your camera toggle and scripted cameras retain control. Applies immediately; saved across restarts.",0,0,1,true,true},
+        {"melee_body_camera",L"Gameplay",L"MeleeBodyCamera","Melee camera style","Body camera uses existing third-person melee animations at the native eye position; experimental, model clipping needs gameplay testing. Native first person needs custom melee viewmodels: stock melee attacks have no visible hands.",1,0,1,false,true}
+    };
+    return options;
+}
+bool FirstPersonMeleeEnabled() { return meleeEnabled.load(); }
+bool MeleeBodyCamera() { return meleeBody.load(); }
 bool WriteFrameworkOption(const std::filesystem::path& config,const FrameworkOption& option,double value) {
     if (!std::isfinite(value) || !SafeFile(config)) return false;
     value=std::round(std::clamp(value,option.minimum,option.maximum));
@@ -57,6 +69,7 @@ bool WriteFrameworkOption(const std::filesystem::path& config,const FrameworkOpt
 }
 void InitializeFrameworkPreferences(const std::filesystem::path& config) {
     for (const auto& option:FrameworkOptions()) if (option.live) Apply(option,ReadFrameworkOption(config,option));
+    for (const auto& option:GameplayOptions()) Apply(option,ReadFrameworkOption(config,option));
 }
 float MenuScale() { return menuScale.load(); }
 std::filesystem::path ActiveGameFolder(const std::filesystem::path& root) {

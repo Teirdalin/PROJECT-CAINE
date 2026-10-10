@@ -36,6 +36,7 @@ int main() {
         backend.read=[&](const char* name)->std::optional<double>{const auto found=values.find(name);return found==values.end()?std::nullopt:std::optional<double>(found->second);};
         backend.command=[&](const std::string& command){commands.push_back(command);};
         bool inGame=true;backend.inGame=[&] { return inGame; };
+        bool meleeAvailable=true;backend.firstPersonMeleeAvailable=[&] { return meleeAvailable; };
         double fov=90;bool fovWritable=true;
         backend.fieldOfView=[&] { return fov; };
         backend.setFieldOfView=[&](double value) { if (!fovWritable) return false;fov=value;return true; };
@@ -78,6 +79,17 @@ int main() {
         caine::GameMenus restored(backend,root,active);
         Check(commands.size()==2 && commands[0]=="mat_trilinear 1\n" && commands[1]=="fps_max 60\n","non-archived graphics restored per profile");commands.clear();
         caine::GameMenus otherProfile(backend,root,root/"Vampire");Check(commands.empty(),"graphics preferences leaked to another profile");
+        action("Gameplay");build();
+        for (const auto& control:view.controls) if(control.label=="First Person Melee") Check(control.number==0 && (control.flags&CAINE_CONTROL_LIVE),"melee must start disabled and apply live");
+        action("First Person Melee","",1);build();Check(caine::FirstPersonMeleeEnabled(),"melee toggle did not reach runtime preferences");
+        action("Melee camera style","",0);Check(!caine::MeleeBodyCamera() && commands.empty(),"melee style did not apply or used console workaround");
+        action("Melee camera style","",2);Check(!caine::MeleeBodyCamera(),"invalid camera style accepted");
+        action("Melee camera style","",1);build();action("First Person Melee","",0);Check(!caine::FirstPersonMeleeEnabled(),"melee disable");
+        build();action("Melee camera style","",0);Check(caine::MeleeBodyCamera(),"disabled style accepted a change");
+        for(const auto& control:view.controls) if(control.label=="Melee camera style") Check(control.text=="Body camera (experimental)","camera dropdown omitted selected label");
+        meleeAvailable=false;build();
+        for(const auto& control:view.controls) if(control.label=="First Person Melee") Check(control.flags&CAINE_CONTROL_DISABLED,"unsupported camera must be unavailable");
+        action("First Person Melee","",1);Check(!caine::FirstPersonMeleeEnabled(),"unavailable camera option accepted");meleeAvailable=true;
         action("Framework");build();action("Interface scale","",150);Check(caine::MenuScale()==1.5f,"live interface scale");
         build();action("Skip startup logos","",0);Check(commands.empty(),"framework setting dispatched as engine command");
         const auto config=root/"Bin/loader/CAINE/CAINE.ini";

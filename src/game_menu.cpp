@@ -2,6 +2,7 @@
 #include <caine/native_bridge.hpp>
 #include <caine/logging.hpp>
 #include <caine/preferences.hpp>
+#include <caine/melee_camera.hpp>
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -118,6 +119,7 @@ std::optional<GameMenuBackend> NativeGameMenuBackend(const Module& client) {
         (*static_cast<uint8_t***>(game))[1]!=engine.base+0xfbbb0 ||
         (*static_cast<uint8_t***>(game))[2]!=engine.base+0xfbbc0) return {};
     GameMenuBackend backend;
+    backend.firstPersonMeleeAvailable=[] { return MeleeCameraAvailable(); };
     backend.fieldOfView=[] { return NativeFieldOfView(); };
     backend.inGame=[commands] { using Active=bool(__thiscall*)(void*);return Method<Active>(commands,57)(commands); };
     backend.read=[cvars,cache=std::map<std::string,uint8_t*>{}](const char* name) mutable ->std::optional<double> {
@@ -328,6 +330,26 @@ void GameMenus::Build(MenuView& view) {
     view.pageTitle="Settings";
     for (const std::string tab:{"Audio","Mouse","Keyboard","Gameplay","Video","Visual","Framework"}) add(CAINE_CONTROL_TAB,tab=="Visual"?"Graphics":tab=="Video"?"Display":tab,{},0,0,0,tab==tab_?CAINE_CONTROL_SELECTED:0,[this,tab](const std::string&,double){tab_=tab;search_.clear();if(tab=="Keyboard")RefreshBindings();return false;});
     heading(tab_=="Visual"?"Graphics":tab_=="Video"?"Display":tab_);
+    if (tab_=="Gameplay") {
+        const bool available=backend_.firstPersonMeleeAvailable && backend_.firstPersonMeleeAvailable();
+        const auto& options=GameplayOptions();
+        const auto enabled=ReadFrameworkOption(config_,options[0]);
+        for (const auto& option:options) {
+            const bool disabled=!available || (!option.toggle && enabled==0);
+            const auto value=ReadFrameworkOption(config_,option);
+            const std::string selected=option.toggle?"":(value==0?"Native first person (custom viewmodels)":"Body camera (experimental)");
+            add(option.toggle?CAINE_CONTROL_TOGGLE:MenuControlDropdown,option.label,selected,value,0,1,
+                CAINE_CONTROL_INTEGER|CAINE_CONTROL_LIVE|(disabled?CAINE_CONTROL_DISABLED:0),
+                [this,option](const std::string&,double number){
+                    if (backend_.firstPersonMeleeAvailable && backend_.firstPersonMeleeAvailable() &&
+                        (option.toggle || ReadFrameworkOption(config_,GameplayOptions()[0])!=0) && std::isfinite(number) && (number==0 || number==1))
+                        message_=WriteFrameworkOption(config_,option,number)?"Melee camera setting applied and saved.":"Could not save CAINE settings. Check the installation folder's permissions.";
+                    return false;
+                });
+            if (!option.toggle) view.controls.back().options={"Native first person (custom viewmodels)","Body camera (experimental)"};
+            view.controls.back().hint=available?option.hint:"Unavailable: this client build or an existing camera hook is incompatible with CAINE's melee camera feature.";
+        }
+    }
     if (tab_=="Framework") {
         for (const auto& option:FrameworkOptions()) {
             add(option.toggle?CAINE_CONTROL_TOGGLE:CAINE_CONTROL_SLIDER,option.label,{},ReadFrameworkOption(config_,option),option.minimum,option.maximum,CAINE_CONTROL_INTEGER|CAINE_CONTROL_LIVE,

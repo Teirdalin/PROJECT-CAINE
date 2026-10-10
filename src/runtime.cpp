@@ -11,6 +11,7 @@
 #include <caine/update.hpp>
 #include <caine/logging.hpp>
 #include <caine/preferences.hpp>
+#include <caine/melee_camera.hpp>
 #include <shellapi.h>
 #include <array>
 #include <set>
@@ -64,7 +65,7 @@ DWORD WINAPI Bootstrap(void*) {
                 Log("CAINE_CRASH_REPORTER_READY: external x86 reporter; exception context, stacks, modules, recent activity and minidumps; first-chance candidates preserve native handling");
             else Log("CAINE_CRASH_REPORTER_UNAVAILABLE: helper missing or initialization failed; native crash handling retained");
         }
-        Log("PROJECT CAINE 0.3.17 x86 starting; native loader route; mod API v1");
+        Log("PROJECT CAINE 0.3.18 x86 starting; native loader route; mod API v1");
         caine::InitializeUpdates(exe.parent_path(),config,Log);
         Log("Executable SHA256=" + caine::Sha256(exe));
         const bool skipStartup=GetPrivateProfileIntW(L"Startup",L"SkipVideos",1,config.c_str())!=0;
@@ -125,6 +126,7 @@ DWORD WINAPI Bootstrap(void*) {
             }
             if (!menuAttempted && GetModuleHandleW(L"client.dll")) {
                 menuAttempted = true;
+                caine::InstallMeleeCamera(caine::Module::Inspect(GetModuleHandleW(L"client.dll")),Log);
                 if (!caine::InstallModsMenu(Log)) Log("CAINE_MODS_MENU_UNAVAILABLE: unsupported or conflicting client profile");
             }
             if (menuAttempted && !rendererAttempted && GetModuleHandleW(L"shaderapidx9.dll")) {

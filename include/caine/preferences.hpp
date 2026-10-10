@@ -15,6 +15,9 @@ struct FrameworkOption {
     bool toggle, live;
 };
 const std::vector<FrameworkOption>& FrameworkOptions();
+const std::vector<FrameworkOption>& GameplayOptions();
+bool FirstPersonMeleeEnabled();
+bool MeleeBodyCamera();
 double ReadFrameworkOption(const std::filesystem::path& config, const FrameworkOption& option);
 bool WriteFrameworkOption(const std::filesystem::path& config, const FrameworkOption& option, double value);
 void InitializeFrameworkPreferences(const std::filesystem::path& config);

@@ -19,6 +19,7 @@ struct GameMenuBackend {
     std::function<double()> fieldOfView;
     std::function<bool(double)> setFieldOfView;
     std::function<bool()> inGame;
+    std::function<bool()> firstPersonMeleeAvailable;
 };
 std::optional<GameMenuBackend> NativeGameMenuBackend(const Module& client);
 // Read an effective loose/VPK game resource; no game content is redistributed.

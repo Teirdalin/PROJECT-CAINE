@@ -54,17 +54,18 @@ int wmain(int argc, wchar_t** argv) {
             mod.description="NPC personalities, knowledge, memories, Gemini dialogue and xVASynth voices. Development build; gameplay integration is incomplete.";
             if (mode != L"empty") view.mods.push_back(mod);
             view.selected=mod.id;
-            if (mode==L"framework") {
+            if (mode==L"framework" || mode==L"gameplay") {
                 caine::GameMenuBackend backend;
                 backend.read=[](const char*) { return std::optional<double>{}; };
                 backend.bindings=[] { return std::vector<caine::KeyBinding>{}; };
+                backend.firstPersonMeleeAvailable=[] { return true; };
                 const auto temporary=std::filesystem::temp_directory_path()/("CAINE-framework-preview-"+std::to_string(GetCurrentProcessId()));
                 std::filesystem::create_directories(temporary);
                 caine::GameMenus menus(backend,temporary,temporary/"Vampire");
                 menus.Open(caine::GameMenuPage::Settings);menus.Build(view);
-                for (const auto& control:view.controls) if (control.label=="Framework") { menus.Action(control.id,{},0);break; }
+                for (const auto& control:view.controls) if (control.label==(mode==L"framework"?"Framework":"Gameplay")) { menus.Action(control.id,{},0);break; }
                 menus.Build(view);
-                Check(caine::WriteFrameworkOption(temporary/"scale.ini",caine::FrameworkOptions().front(),150),"preview scale preference"); // maximum supported UI scale
+                if (mode==L"framework") Check(caine::WriteFrameworkOption(temporary/"scale.ini",caine::FrameworkOptions().front(),150),"preview scale preference"); // maximum supported UI scale
             }
             if (mode == L"many") for (int i=0; i<30; ++i) { mod.id="fixture"+std::to_string(i); mod.name="Example mod "+std::to_string(i+1); mod.active=false; view.mods.push_back(mod); }
             if (mode == L"settings") {

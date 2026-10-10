@@ -14,14 +14,14 @@ plugin API, modern menus, configuration, crash reports and serialization helpers
 CAINE has no AI service dependency. **Bloodlines: Unscripted** is a separate,
 optional AI mod and is not distributed by this repository or framework updater.
 
-Version **0.3.17-framework-dev** is a development prerelease. Native and renderer
+Version **0.3.18-framework-dev** is a development prerelease. Native and renderer
 regressions pass, but live gameplay acceptance remains pending. Character-creation
 crash investigation and optional Unscripted conversation acceptance are not
 claimed resolved by this release. No game binaries or unofficial SDK code are included.
 
 ## Install
 
-1. Download and extract the **PROJECT-CAINE-0.3.17-framework-dev.zip** player asset
+1. Download and extract the **PROJECT-CAINE-0.3.18-framework-dev.zip** player asset
    from [Releases](https://github.com/Teirdalin/PROJECT-CAINE/releases).
 2. Close Bloodlines and its mod selection window.
 3. Double-click **Install PROJECT CAINE.cmd** and select your **Vampire.exe**.
@@ -59,6 +59,11 @@ alongside native trilinear filtering and a 30–240 FPS cap. CAINE saves these
 non-archived graphics preferences separately for each active game profile.
 Display contains the native resolution dropdown. Other staged settings retain
 their Apply/Discard controls; 60 FPS is recommended for original game timing.
+
+Gameplay includes opt-in **First Person Melee**, with an experimental body camera
+and a native first-person option for custom melee viewmodels. Settings apply live
+and persist. Stock melee viewmodels are invisible; see
+[First Person Melee](docs/FIRST_PERSON_MELEE.md) for implementation and test limits.
 
 Settings > Framework includes live interface scaling (75–150%) and detailed
 logging, plus startup, cinematic, update and crash-report preferences. Options
