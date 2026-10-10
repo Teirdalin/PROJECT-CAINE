@@ -51,8 +51,8 @@ double ReadFrameworkOption(const std::filesystem::path& config,const FrameworkOp
 }
 const std::vector<FrameworkOption>& GameplayOptions() {
     static const std::vector<FrameworkOption> options{
-        {"first_person_melee",L"Gameplay",L"FirstPersonMelee","First Person Melee","Opt-in. Keeps ordinary melee at eye level when you prefer first person. Your camera toggle and scripted cameras retain control. Applies immediately; saved across restarts.",0,0,1,true,true},
-        {"melee_body_camera",L"Gameplay",L"MeleeBodyCamera","Melee camera style","Body camera follows the animated head and its eye attachment while preserving mouse aim; experimental, clipping needs gameplay testing. Native first person needs custom melee viewmodels: stock melee attacks have no visible hands.",1,0,1,false,true}
+        {"first_person_melee",L"Gameplay",L"FirstPersonMelee","First Person Melee","",0,0,1,true,true},
+        {"melee_body_camera",L"Gameplay",L"MeleeBodyCamera","Melee camera style","",1,0,1,false,true}
     };
     return options;
 }

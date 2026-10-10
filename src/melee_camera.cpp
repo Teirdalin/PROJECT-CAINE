@@ -1,6 +1,7 @@
 #include <caine/melee_camera.hpp>
 #include <caine/preferences.hpp>
 #include <caine/logging.hpp>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -176,6 +177,19 @@ bool HeadView(void* view,int& bone,bool& eyes) noexcept {
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+float ReduceNearPlane(void* view) noexcept {
+    __try {
+        // The native view builder at 191710 owns a CViewSetup at +10 and
+        // initializes world near/far at +6c/+70 (view +5c/+60). Stock world
+        // near is 8; viewmodels already use 1 at view +64. Change only this
+        // frame's valid body view, retaining any tighter existing plane.
+        const auto nearPlane=Read<float>(view,0x5c),farPlane=Read<float>(view,0x60);
+        if (!std::isfinite(nearPlane) || !std::isfinite(farPlane) || nearPlane<=0.f || farPlane<=nearPlane) return 0.f;
+        const float reduced=std::min(nearPlane,1.f);
+        std::memcpy(static_cast<uint8_t*>(view)+0x5c,&reduced,sizeof(reduced));
+        return reduced;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return 0.f; }
+}
 void __fastcall Switch(void* weapon,void*) {
     weaponSwitch(weapon);
     // Leave native camera preferences and weapon data untouched. Only the
@@ -202,10 +216,11 @@ void __fastcall View(void* self,void*,void* view) {
     if (BodyEligible(self)) {
         int bone=-1;bool eyes=false;
         headViewActive=HeadView(view,bone,eyes);
+        const float nearPlane=headViewActive?ReduceNearPlane(view):0.f;
         const auto now=GetTickCount64();
         if (!headLogged || now-headLogged>=5000) {
             headLogged=now;
-            TraceLog("CAINE_MELEE_HEAD_VIEW: active="+std::to_string(headViewActive)+" bone="+std::to_string(bone)+" eyes_attachment="+std::to_string(eyes));
+            TraceLog("CAINE_MELEE_HEAD_VIEW: active="+std::to_string(headViewActive)+" bone="+std::to_string(bone)+" eyes_attachment="+std::to_string(eyes)+" near_clip="+std::to_string(nearPlane));
         }
         // Only the origin follows animation. Mouse aim remains authoritative.
         if (headViewActive) return;
@@ -235,6 +250,8 @@ bool InstallMeleeCamera(const Module& client,const std::function<void(const std:
         Read<uint8_t*>(base,0x224d4c+0xd4)!=base+0xffaf0 ||
         !Bytes(client,0x8f900,{0x8b,0x44,0x24,0x04,0x56,0x85,0xc0,0x8b,0xf1}) ||
         !Bytes(client,0x919c0,{0xb8,0x30,0x27,0,0,0xe8,0x36,0xf5,0x13,0}) ||
+        !Bytes(client,0x19179f,{0xc7,0x46,0x6c,0,0,0,0x41,0xc7,0x46,0x74,0,0,0x80,0x3f}) ||
+        !Bytes(client,0x1917e1,{0x8d,0x5e,0x10,0xc7,0x03,0,0,0,0}) ||
         !Bytes(client,0xff8ee,{0x5f,0x5e,0x5d,0xc3})) {
         log("CAINE_MELEE_CAMERA_UNAVAILABLE: native camera/weapon contract mismatch");return false;
     }

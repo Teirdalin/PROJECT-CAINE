@@ -11,11 +11,16 @@ The worker pins CAINE for process lifetime. Do not hot-unload it, invoke cleanup
 
 Status export `LONG WINAPI CaineGetStatus(void)`: 0 dormant/disabled, 1 starting,
 2 observing the engine, 3 disabled by configuration, -1 failed.
-`DWORD WINAPI CaineVersion(void)` returns 0x000314 (0.3.20).
+`DWORD WINAPI CaineVersion(void)` returns 0x000315 (0.3.21).
 The framework installs its guarded Mods menu on the supported client profile.
 Feature initialization can fail after creating detours; those trampolines are retained
 until process exit. Log writes are synchronized across control and callback threads.
 Public plugins use [mod API v1](MOD_API.md), not the core C++ implementation ABI.
+
+Player-facing settings use concise names and plain choices. Do not add routine
+success toasts or implementation/validation commentary to self-explanatory
+controls. Keep development detail in logs and documentation. Show actionable
+errors and restart requirements when the player needs them.
 
 The module observer runs on a worker thread. **It is not a game-thread dispatcher.**
 Do not call engine entities, UI, audio, the embedded Python interpreter, or simulation

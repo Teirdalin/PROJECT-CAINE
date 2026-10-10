@@ -18,6 +18,12 @@ third person. The feature supports two presentations:
   offset (4.5, 2.2, 0). The head name is resolved from the current model every
   callback, so model changes and loads cannot retain another model's bone ID.
   Keep the character's camera-distance opacity at 1 only after a valid head view.
+  Reduce that view's world near clipping plane from the stock 8 units to 1,
+  matching the native viewmodel distance. An existing tighter plane is retained.
+  The native builder restores its defaults each frame; far distance, other
+  cameras and viewmodel projection are unchanged. This prevents nearby body
+  geometry from being cut off by the wider stock near plane; it does not hide
+  head/hair geometry intersecting the eye position.
   This offers visible native
   animations without manufacturing a set of first-person animation assets.
 - **Native first person (custom viewmodels):** suppress the ordinary melee
@@ -39,6 +45,10 @@ toggle's selected preference and avoids its subsequent inven_holster command
 only for eligible opt-in melee. Its registers, flags and native epilogue remain
 intact; disabling the feature restores that original branch.
 The native CInput object/vtable and active-weapon/data helpers are also verified.
+The view builder at 0x191710 owns CViewSetup at +0x10. Its exact near-plane
+initialization bytes at 0x19179f and view-base bytes at 0x1917e1 are verified
+before installing camera hooks. World near/far are view +0x5c/+0x60; viewmodel
+near/far are +0x64/+0x68. Only finite, positive, ordered world planes are changed.
 The head camera independently verifies GetModelPtr (0x8f900), SetupBones
 (0x919c0), and the installed player renderable's SetupBones entry. The installed
 studio header version is 0x9e3, with length at 0x8c, 160-byte bones and 60-byte
@@ -87,6 +97,11 @@ convention; they do not execute the full live animation renderer. A read-only
 live check confirmed the current player's version, head index and SetupBones
 entry against that contract. All 59 installed player models have Bip01 Head;
 some armor/beast models omit named eyes attachments.
+Clipping checks execute the installed builder's near-plane writes with a
+controlled continuation, then exercise the production camera detour. They
+cover the 8-to-1 reduction, preserving tighter planes, invalid/unordered values,
+native camera defaults, failed head setup, and a modified clipping contract
+rejecting the entire melee hook batch before any camera code is changed.
 The real Gameplay menu persistence and a D3D9 render preview
 also have regression checks.
 

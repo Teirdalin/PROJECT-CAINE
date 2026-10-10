@@ -86,7 +86,7 @@ int main() {
         action("Melee camera style","",2);Check(!caine::MeleeBodyCamera(),"invalid camera style accepted");
         action("Melee camera style","",1);build();action("First Person Melee","",0);Check(!caine::FirstPersonMeleeEnabled(),"melee disable");
         build();action("Melee camera style","",0);Check(caine::MeleeBodyCamera(),"disabled style accepted a change");
-        for(const auto& control:view.controls) if(control.label=="Melee camera style") Check(control.text=="Body camera (experimental)","camera dropdown omitted selected label");
+        for(const auto& control:view.controls) if(control.label=="Melee camera style") Check(control.text=="Body camera","camera dropdown omitted selected label");
         meleeAvailable=false;build();
         for(const auto& control:view.controls) if(control.label=="First Person Melee") Check(control.flags&CAINE_CONTROL_DISABLED,"unsupported camera must be unavailable");
         action("First Person Melee","",1);Check(!caine::FirstPersonMeleeEnabled(),"unavailable camera option accepted");meleeAvailable=true;

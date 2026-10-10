@@ -338,17 +338,17 @@ void GameMenus::Build(MenuView& view) {
         for (const auto& option:options) {
             const bool disabled=!available || (!option.toggle && enabled==0);
             const auto value=ReadFrameworkOption(config_,option);
-            const std::string selected=option.toggle?"":(value==0?"Native first person (custom viewmodels)":"Body camera (experimental)");
+            const std::string selected=option.toggle?"":(value==0?"Native first person":"Body camera");
             add(option.toggle?CAINE_CONTROL_TOGGLE:MenuControlDropdown,option.label,selected,value,0,1,
                 CAINE_CONTROL_INTEGER|CAINE_CONTROL_LIVE|(disabled?CAINE_CONTROL_DISABLED:0),
                 [this,option](const std::string&,double number){
                     if (backend_.firstPersonMeleeAvailable && backend_.firstPersonMeleeAvailable() &&
                         (option.toggle || ReadFrameworkOption(config_,GameplayOptions()[0])!=0) && std::isfinite(number) && (number==0 || number==1))
-                        message_=WriteFrameworkOption(config_,option,number)?"Melee camera setting applied and saved.":"Could not save CAINE settings. Check the installation folder's permissions.";
+                        message_=WriteFrameworkOption(config_,option,number)?"":"Could not save CAINE settings. Check the installation folder's permissions.";
                     return false;
                 });
-            if (!option.toggle) view.controls.back().options={"Native first person (custom viewmodels)","Body camera (experimental)"};
-            view.controls.back().hint=available?option.hint:"Unavailable: this client build or an existing camera hook is incompatible with CAINE's melee camera feature.";
+            if (!option.toggle) view.controls.back().options={"Native first person","Body camera"};
+            view.controls.back().hint=available?option.hint:"First Person Melee is unavailable for this installation.";
         }
     }
     if (tab_=="Framework") {

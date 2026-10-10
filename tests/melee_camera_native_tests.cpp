@@ -3,6 +3,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <cwchar>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -17,6 +18,10 @@ void* currentWeapon{};
 void* expectedRenderable{};
 bool setupSucceeds=true;
 unsigned setups{};
+struct NativeView {
+    std::array<uint8_t,0xa4> renderer{};
+    uint8_t* data() { return renderer.data()+0x10; }
+};
 void Check(bool value,const char* reason) { if (!value) throw std::runtime_error(reason); }
 template<class T> void Put(void* p,size_t o,T value) { memcpy(static_cast<uint8_t*>(p)+o,&value,sizeof(value)); }
 void* __fastcall Weapon(void*,void*) { return currentWeapon; }
@@ -46,10 +51,21 @@ __declspec(naked) void __cdecl ToggleEntry(void*,void*,void*) {
         jmp eax
     }
 }
+__declspec(naked) void __cdecl InitializeNearPlanes(void*,void*) {
+    __asm {
+        mov eax,dword ptr [esp+4]
+        mov ecx,dword ptr [esp+8]
+        push esi
+        mov esi,ecx
+        call eax
+        pop esi
+        ret
+    }
+}
 }
 int wmain(int argc,wchar_t** argv) {
  try {
-    Check(argc==2 || argc==3,"installed client DLL [conflict]");
+    Check(argc==2 || argc==3,"installed client DLL [conflict|clip-conflict]");
     const auto image=LoadLibraryExW(argv[1],nullptr,DONT_RESOLVE_DLL_REFERENCES);
     Check(image!=nullptr,"map installed client");const auto module=caine::Module::Inspect(image);
     auto input=module.base+0x2ea6c8;
@@ -60,7 +76,8 @@ int wmain(int argc,wchar_t** argv) {
     auto wrong=module;wrong.sha256="unsupported";
     Check(!caine::InstallMeleeCamera(wrong,[](const auto&){}),"unknown binary accepted");
     if (argc==3) {
-        DWORD old{};auto address=module.base+0xffb00;
+        const bool clipConflict=std::wcscmp(argv[2],L"clip-conflict")==0;
+        DWORD old{};auto address=module.base+(clipConflict?0x19179f:0xffb00);
         Check(VirtualProtect(address,1,PAGE_EXECUTE_READWRITE,&old)!=FALSE,"fixture patch");
         *address=0xcc;DWORD ignored{};VirtualProtect(address,1,old,&ignored);
         Check(!caine::InstallMeleeCamera(module,[](const auto&) {}) && !caine::MeleeCameraAvailable(),"conflicting camera hook accepted");
@@ -68,6 +85,14 @@ int wmain(int argc,wchar_t** argv) {
         std::cout<<"CAINE_MELEE_CONFLICT_OK\n";return 0;
     }
     Check(caine::InstallMeleeCamera(module,[](const auto& s){std::cout<<s<<'\n';}),"production hook profile");
+    // Execute the installed builder's two near-plane writes, with a controlled
+    // return before its unrelated engine calls. Only this owned mapped image
+    // is changed; no game file or running game is touched.
+    DWORD clipProtection{};
+    Check(VirtualProtect(module.base+0x1917ad,1,PAGE_EXECUTE_READWRITE,&clipProtection)!=FALSE,"fixture clip continuation");
+    module.base[0x1917ad]=0xc3;
+    DWORD ignoredClip{};VirtualProtect(module.base+0x1917ad,1,clipProtection,&ignoredClip);
+    FlushInstructionCache(GetCurrentProcess(),module.base+0x1917ad,1);
     caine::TestMeleeOriginals(reinterpret_cast<void*>(Think),reinterpret_cast<void*>(View),reinterpret_cast<void*>(Alpha));
     std::array<uint8_t,0x1700> player{};std::array<void*,150> playerTable{};
     playerTable[0x250/4]=reinterpret_cast<void*>(Weapon);Put(player.data(),0,playerTable.data());
@@ -109,13 +134,21 @@ int wmain(int argc,wchar_t** argv) {
     auto set=[&](size_t i,double value){Check(caine::WriteFrameworkOption(config,options[i],value),"persist option");};
     using Void=void(__thiscall*)(void*);using ViewCall=void(__thiscall*)(void*,void*);using AlphaCall=float(__thiscall*)(void*);
     const auto think=reinterpret_cast<Void>(module.base+0xff130),change=reinterpret_cast<Void>(module.base+0x9c250);
-    const auto view=reinterpret_cast<ViewCall>(module.base+0xffb00);const auto alpha=reinterpret_cast<AlphaCall>(module.base+0xffaf0);
-    std::array<uint8_t,0x94> setup{};Put(setup.data(),0x38,10.f);Put(setup.data(),0x50,20.f);
+    const auto nativeView=reinterpret_cast<ViewCall>(module.base+0xffb00);const auto alpha=reinterpret_cast<AlphaCall>(module.base+0xffaf0);
+    NativeView setup;Put(setup.data(),0x38,10.f);Put(setup.data(),0x50,20.f);
+    Put(setup.data(),0x60,28400.f);Put(setup.data(),0x68,28400.f);
+    const auto view=[&](void* self,void* data) {
+        InitializeNearPlanes(module.base+0x19179f,setup.renderer.data());
+        nativeView(self,data);
+    };
+    const auto plane=[&](size_t offset) { float value{};memcpy(&value,setup.data()+offset,4);return value; };
     think(input);Check(input[0xf8]==0,"disabled startup re-evaluated the native camera");
     change(currentWeapon);Check(input[0xf8]==1,"off changed original melee camera");
     view(input,setup.data());Check(views==1 && alpha(input)==.25f,"disabled changed rendering");
+    Check(plane(0x5c)==8.f && plane(0x64)==1.f,"native clip defaults or disabled restoration");
     set(0,1);think(input);Put(setup.data(),0x38,10.f);Put(setup.data(),0x50,20.f);
     view(input,setup.data());Check(views==1 && alpha(input)==1.f && setups==1,"head FPV did not refresh native bones/visible model");
+    Check(plane(0x5c)==1.f && plane(0x60)==28400.f && plane(0x64)==1.f && plane(0x68)==28400.f,"body near clip changed wrong projection fields");
     auto origin=[&](size_t i){return *reinterpret_cast<float*>(setup.data()+0x38+i*4);};
     Check(origin(0)==54.5f && std::abs(origin(1)-102.2f)<.001f && origin(2)==75.f && *reinterpret_cast<float*>(setup.data()+0x50)==20.f,"head eye attachment transform or mouse aim");
     matrices[15]=60.f;matrices[23]=68.f;view(input,setup.data());
@@ -133,8 +166,16 @@ int wmain(int argc,wchar_t** argv) {
     std::array<uint8_t,0x600> changed=header;Put(changed.data(),0x1a8,int(0x360-0x1a8));Put(changed.data(),0x1a8+0x88,0x100);Put(changed.data(),0xf0,1);Put(changed.data(),0x408,0);
     matrices[0]=matrices[5]=matrices[10]=1.f;matrices[3]=80.f;matrices[7]=90.f;matrices[11]=65.f;
     Put(player.data(),0x6ac,changed.data());view(input,setup.data());Check(origin(0)==84.5f && origin(2)==65.f,"model change retained stale head index");Put(player.data(),0x6ac,header.data());
+    Put(setup.data(),0x5c,.25f);nativeView(input,setup.data());Check(plane(0x5c)==.25f,"tighter existing near clip increased");
+    for (const float invalid:{0.f,-1.f,std::numeric_limits<float>::quiet_NaN(),std::numeric_limits<float>::infinity()}) {
+        Put(setup.data(),0x5c,invalid);nativeView(input,setup.data());
+        Check(std::isnan(invalid)?std::isnan(plane(0x5c)):plane(0x5c)==invalid,"invalid near clip overwritten");
+    }
+    Put(setup.data(),0x5c,8.f);Put(setup.data(),0x60,4.f);nativeView(input,setup.data());Check(plane(0x5c)==8.f,"unordered planes changed");
+    Put(setup.data(),0x60,std::numeric_limits<float>::infinity());nativeView(input,setup.data());Check(plane(0x5c)==8.f,"nonfinite far plane changed near clip");Put(setup.data(),0x60,28400.f);
+    setupSucceeds=false;view(input,setup.data());Check(plane(0x5c)==8.f,"failed head view retained body near clip");setupSucceeds=true;
     for (const auto offset:{0x88u,0x15e8u,0x16e0u}) {
-        Put(player.data(),offset,1);view(input,setup.data());Check(alpha(input)==.25f,"script camera priority");Put(player.data(),offset,0);
+        Put(player.data(),offset,1);view(input,setup.data());Check(alpha(input)==.25f && plane(0x5c)==8.f,"script camera priority");Put(player.data(),offset,0);
     }
     Put(player.data(),0x16f0,1);Check(alpha(input)==.25f,"native dialogue camera priority");Put(player.data(),0x16f0,0);
     for(const auto bits:{0x10u,0x400u}) { Put(player.data(),0x16f4,bits);Check(alpha(input)==.25f,"special character camera priority"); }
@@ -152,6 +193,7 @@ int wmain(int argc,wchar_t** argv) {
     Put(module.base,0x4a0d50,static_cast<void*>(nullptr));Check(alpha(input)==.25f,"player unload retained state");Put(module.base,0x4a0d50,player.data());
     std::thread other([&]{Check(alpha(input)==.25f,"cross-thread native access");});other.join();
     set(1,0);think(input);Check(input[0xf8]==0 && input[0xf0]==0,"native first person not applied or preference changed");
+    view(input,setup.data());Check(plane(0x5c)==8.f && plane(0x64)==1.f,"native first person clip defaults changed");
     change(currentWeapon);Check(input[0xf8]==0,"melee equip forced third person in native mode");
     input[0xf0]=1;change(currentWeapon);Check(input[0xf8]==1,"manual third-person camera not retained");input[0xf0]=0;
     input[0xf0]=1;ToggleEntry(module.base+0xff87f,input,player.data());
