@@ -65,7 +65,7 @@ DWORD WINAPI Bootstrap(void*) {
                 Log("CAINE_CRASH_REPORTER_READY: external x86 reporter; exception context, stacks, modules, recent activity and minidumps; first-chance candidates preserve native handling");
             else Log("CAINE_CRASH_REPORTER_UNAVAILABLE: helper missing or initialization failed; native crash handling retained");
         }
-        Log("PROJECT CAINE 0.3.21 x86 starting; native loader route; mod API v1");
+        Log("PROJECT CAINE 0.3.22 x86 starting; native loader route; mod API v1");
         Log("CAINE_GAME_PROFILE: active="+caine::ActiveGameFolder(exe.parent_path()).filename().u8string()+" unofficial_patch_installed="+std::to_string(caine::UnofficialPatchInstalled(exe.parent_path())));
         caine::InitializeUpdates(exe.parent_path(),config,Log);
         Log("Executable SHA256=" + caine::Sha256(exe));

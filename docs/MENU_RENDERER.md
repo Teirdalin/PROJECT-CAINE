@@ -1,4 +1,4 @@
-# Modern menus (CAINE 0.3.21)
+# Modern menus (CAINE 0.3.22)
 
 CAINE draws inside Bloodlines with Dear ImGui 1.91.9b and the upstream DirectX 9
 backend. Normal startup through the native loader is retained.

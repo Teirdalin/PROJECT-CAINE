@@ -12,8 +12,15 @@ third person. The feature supports two presentations:
 - **Body camera (experimental):** retain the native third-person character and
   melee animations. Refresh the native animation cache and attach the camera
   origin to `Bip01 Head`, using the model's bone-local `eyes` attachment offset.
-  Both translations and rotations of the animated head move the camera position;
-  mouse aim stays unchanged so animation does not steer the player's aim.
+  Follow the animated head pivot, rotate its rest orientation with mouse aim,
+  and move the camera 2.5 units forward from the eye position toward the nose tip.
+  The camera and visible head use the same orientation when looking down or
+  turning; attack animation does not steer mouse aim. Head descendants such as
+  eyes, hair and jaw follow that rotation; torso, arms and weapons remain native.
+  Head posing is scoped to the local player's DrawModel callback. Original
+  bone matrices are restored before native bone rebuilds and on every draw
+  exit, including exceptions. Only render output buffers receive the pose;
+  later gameplay queries receive the original native transforms.
   Armor models without a named eyes attachment use the stock head-local eye
   offset (4.5, 2.2, 0). The head name is resolved from the current model every
   callback, so model changes and loads cannot retain another model's bone ID.
@@ -23,7 +30,7 @@ third person. The feature supports two presentations:
   The native builder restores its defaults each frame; far distance, other
   cameras and viewmodel projection are unchanged. This prevents nearby body
   geometry from being cut off by the wider stock near plane; it does not hide
-  head/hair geometry intersecting the eye position.
+  arbitrary head/hair geometry on custom models.
   This offers visible native
   animations without manufacturing a set of first-person animation assets.
 - **Native first person (custom viewmodels):** suppress the ordinary melee
@@ -37,7 +44,7 @@ third person. The feature supports two presentations:
 
 The installed client SHA-256 is
 `9ce1a59fd3f5175a155c5276cb6d092e25a009835585a371f93b923dfc134f01`.
-Five independently inspected boundaries are hooked as one guarded transaction:
+Seven independently inspected boundaries are hooked as one guarded transaction:
 weapon camera selection (RVA 0x9c250), CInput camera thinking (0xff130), camera
 view adjustment (0xffb00), camera-distance model opacity (0xffaf0), and the
 camera-toggle holster tail (0xff87f). The last boundary preserves the native
@@ -50,7 +57,15 @@ initialization bytes at 0x19179f and view-base bytes at 0x1917e1 are verified
 before installing camera hooks. World near/far are view +0x5c/+0x60; viewmodel
 near/far are +0x64/+0x68. Only finite, positive, ordered world planes are changed.
 The head camera independently verifies GetModelPtr (0x8f900), SetupBones
-(0x919c0), and the installed player renderable's SetupBones entry. The installed
+(0x919c0), and the installed player renderable's SetupBones entry. DrawModel
+(0x92970, entity thiscall with two integer arguments) and SetupBones
+(renderable thiscall with output, maximum, mask, time and final native argument)
+are also guarded hooks. SetupBones export at 0x91fae establishes the matrix
+output contract. The inverse bind pose at bone +0x58 supplies model axes;
+parent at +4 establishes head descendants. Native model -Y maps to aim forward,
++X to aim left, and +Z to aim up. Finite, rigid transforms and acyclic bounded
+parent graphs are required. Frame identity and camera-thread guards prevent
+stale views or unrelated render callbacks from posing a head. The installed
 studio header version is 0x9e3, with length at 0x8c, 160-byte bones and 60-byte
 attachments. Their tables, names, offsets, native matrices and final positions
 are bounded and validated before changing the view. Missing or invalid data
@@ -89,9 +104,12 @@ view/opacity/think continuations allow their state and calling convention to be
 checked without launching gameplay. Tests cover off/on, both modes, restoring
 the original route, death/dialogue/ladder/cinematic guards, explicit third person, ranged
 weapons, missing entities, configuration reload, thread exclusion and a camera
-hook conflict. Head-camera tests additionally cover animated translation and
-rotation, model replacement, missing attachments, malformed headers, invalid
-matrices and native bone-setup failure. They execute the installed GetModelPtr
+hook conflict. Head-camera tests additionally cover animated translation,
+mouse pitch/yaw, nose offset, model replacement, missing attachments, malformed headers, invalid
+matrices and native bone-setup failure. Render checks cover head descendants,
+untouched body/root transforms, cached and repeated draws, renderer output,
+ordinary bone queries, exception restoration, stale frames, malformed parent
+links and conflicts at both new hook boundaries. They execute the installed GetModelPtr
 helper, with a controlled SetupBones continuation that verifies its calling
 convention; they do not execute the full live animation renderer. A read-only
 live check confirmed the current player's version, head index and SetupBones
