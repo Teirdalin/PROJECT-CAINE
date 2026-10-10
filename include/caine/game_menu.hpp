@@ -38,6 +38,7 @@ private:
     GameMenuBackend backend_;
     std::filesystem::path root_, active_;
     std::filesystem::path config_;
+    bool patchInstalled_{};
     GameMenuPage page_{};
     std::string tab_{"Audio"}, message_, search_, selectedSave_, saveName_, confirmSave_;
     std::map<std::string,std::array<std::string,2>> bindingSlots_;

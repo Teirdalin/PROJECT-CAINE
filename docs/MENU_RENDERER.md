@@ -1,11 +1,13 @@
-# Modern menus (CAINE 0.3.17)
+# Modern menus (CAINE 0.3.19)
 
 CAINE draws inside Bloodlines with Dear ImGui 1.91.9b and the upstream DirectX 9
 backend. Normal startup through the native loader is retained.
 
 The main menu follows the revised placement: navigation in the left-middle and
-the complete PROJECT CAINE artwork centered across the background. Native menu
-availability determines New Game, Reload, Save, Load, Main Menu and Quit;
+the complete PROJECT CAINE artwork centered across the background.
+The artwork's top and bottom are feathered into black with a smooth gradient;
+the original PNG remains unchanged.
+Native menu availability determines New Game, Reload, Save, Load, Main Menu and Quit;
 CAINE adds Mods and Credits and presents Options as Settings. Escape resumes a
 paused game or returns from a CAINE page. Stock transitions and confirmation
 dialogs retain input whenever the native main menu reports itself busy.

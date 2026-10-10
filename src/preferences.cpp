@@ -52,7 +52,7 @@ double ReadFrameworkOption(const std::filesystem::path& config,const FrameworkOp
 const std::vector<FrameworkOption>& GameplayOptions() {
     static const std::vector<FrameworkOption> options{
         {"first_person_melee",L"Gameplay",L"FirstPersonMelee","First Person Melee","Opt-in. Keeps ordinary melee at eye level when you prefer first person. Your camera toggle and scripted cameras retain control. Applies immediately; saved across restarts.",0,0,1,true,true},
-        {"melee_body_camera",L"Gameplay",L"MeleeBodyCamera","Melee camera style","Body camera uses existing third-person melee animations at the native eye position; experimental, model clipping needs gameplay testing. Native first person needs custom melee viewmodels: stock melee attacks have no visible hands.",1,0,1,false,true}
+        {"melee_body_camera",L"Gameplay",L"MeleeBodyCamera","Melee camera style","Body camera follows the animated head and its eye attachment while preserving mouse aim; experimental, clipping needs gameplay testing. Native first person needs custom melee viewmodels: stock melee attacks have no visible hands.",1,0,1,false,true}
     };
     return options;
 }
@@ -72,6 +72,13 @@ void InitializeFrameworkPreferences(const std::filesystem::path& config) {
     for (const auto& option:GameplayOptions()) Apply(option,ReadFrameworkOption(config,option));
 }
 float MenuScale() { return menuScale.load(); }
+bool UnofficialPatchInstalled(const std::filesystem::path& root) {
+    const auto patch=root/L"Unofficial_Patch";
+    std::error_code error;
+    return SafeFile(patch/L"cfg") && SafeFile(patch/L"maps") &&
+        std::filesystem::is_directory(patch/L"cfg",error) && !error &&
+        std::filesystem::is_directory(patch/L"maps",error) && !error;
+}
 std::filesystem::path ActiveGameFolder(const std::filesystem::path& root) {
     auto result=root/L"Vampire";
     int count{};auto args=CommandLineToArgvW(GetCommandLineW(),&count);

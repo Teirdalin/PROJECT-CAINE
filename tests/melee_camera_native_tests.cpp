@@ -1,22 +1,31 @@
 #include <caine/melee_camera.hpp>
 #include <caine/preferences.hpp>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <thread>
-namespace caine { void TestMeleeOriginals(void*,void*,void*); }
+namespace caine { void TestMeleeOriginals(void*,void*,void*);void TestMeleeBoneSetup(void*); }
 namespace {
 unsigned views{},thinks{},alphas{};
 unsigned holsters{};
 int movementType=2;
 void* currentWeapon{};
+void* expectedRenderable{};
+bool setupSucceeds=true;
+unsigned setups{};
 void Check(bool value,const char* reason) { if (!value) throw std::runtime_error(reason); }
 template<class T> void Put(void* p,size_t o,T value) { memcpy(static_cast<uint8_t*>(p)+o,&value,sizeof(value)); }
 void* __fastcall Weapon(void*,void*) { return currentWeapon; }
 bool __fastcall CvarFlag(void*,void*) { return false; }
+bool __fastcall ModelReady(void*,void*) { return true; }
+bool __fastcall SetupBones(void* self,void*,void* output,int maximum,int mask,float time,int force) {
+    Check(self==expectedRenderable && !output && maximum==-1 && mask==0x100 && time==1.25f && force==0,"native bone setup ABI");
+    ++setups;return setupSucceeds;
+}
 int __fastcall MoveType(void*,void*) { return movementType; }
 void __fastcall Think(void*,void*) { ++thinks; }
 void __fastcall View(void*,void*,void* view) { ++views;Put(view,0x38,123.f);Put(view,0x50,456.f); }
@@ -62,6 +71,25 @@ int wmain(int argc,wchar_t** argv) {
     caine::TestMeleeOriginals(reinterpret_cast<void*>(Think),reinterpret_cast<void*>(View),reinterpret_cast<void*>(Alpha));
     std::array<uint8_t,0x1700> player{};std::array<void*,150> playerTable{};
     playerTable[0x250/4]=reinterpret_cast<void*>(Weapon);Put(player.data(),0,playerTable.data());
+    playerTable[0x11c/4]=reinterpret_cast<void*>(ModelReady);
+    std::array<void*,16> renderableTable{};renderableTable[15]=reinterpret_cast<void*>(SetupBones);
+    Put(player.data(),4,renderableTable.data());expectedRenderable=player.data()+4;
+    caine::TestMeleeBoneSetup(reinterpret_cast<void*>(SetupBones));
+    std::array<uint8_t,0x600> header{};
+    Put(header.data(),0,uint32_t(0x54534449));Put(header.data(),4,uint32_t(0x9e3));Put(header.data(),0x8c,uint32_t(header.size()));
+    Put(header.data(),0xf0,2);Put(header.data(),0xf4,0x1a8);
+    const size_t headRow=0x1a8+160;
+    Put(header.data(),headRow,int(0x360-headRow));memcpy(header.data()+0x360,"Bip01 Head",11);
+    Put(header.data(),headRow+0x88,0x100);
+    Put(header.data(),0x148,1);Put(header.data(),0x14c,0x400);
+    Put(header.data(),0x400,0x80);memcpy(header.data()+0x480,"eyes",5);Put(header.data(),0x408,1);
+    Put(header.data(),0x418,4.5f);Put(header.data(),0x428,2.2f);
+    Put(player.data(),0x6ac,header.data());
+    std::array<float,24> matrices{};matrices[12]=matrices[17]=matrices[22]=1.f;
+    matrices[15]=50.f;matrices[19]=100.f;matrices[23]=75.f;Put(player.data(),0x6e8,matrices.data());
+    std::array<float,4> globals{};globals[3]=1.25f;
+    DWORD globalsProtection{};Check(VirtualProtect(module.base+0x2b8494,4,PAGE_READWRITE,&globalsProtection)!=FALSE,"fixture globals protection");
+    Put(module.base,0x2b8494,globals.data());
     std::array<void*,9> movementTable{};movementTable[8]=reinterpret_cast<void*>(MoveType);
     Put(player.data(),0xc,movementTable.data());
     Put(module.base,0x4a0d50,player.data());
@@ -87,8 +115,24 @@ int wmain(int argc,wchar_t** argv) {
     change(currentWeapon);Check(input[0xf8]==1,"off changed original melee camera");
     view(input,setup.data());Check(views==1 && alpha(input)==.25f,"disabled changed rendering");
     set(0,1);think(input);Put(setup.data(),0x38,10.f);Put(setup.data(),0x50,20.f);
-    view(input,setup.data());Check(views==1 && alpha(input)==1.f,"body FPV did not preserve eye view/visible model");
-    Check(*reinterpret_cast<float*>(setup.data()+0x38)==10.f && *reinterpret_cast<float*>(setup.data()+0x50)==20.f,"eye origin or aim changed");
+    view(input,setup.data());Check(views==1 && alpha(input)==1.f && setups==1,"head FPV did not refresh native bones/visible model");
+    auto origin=[&](size_t i){return *reinterpret_cast<float*>(setup.data()+0x38+i*4);};
+    Check(origin(0)==54.5f && std::abs(origin(1)-102.2f)<.001f && origin(2)==75.f && *reinterpret_cast<float*>(setup.data()+0x50)==20.f,"head eye attachment transform or mouse aim");
+    matrices[15]=60.f;matrices[23]=68.f;view(input,setup.data());
+    Check(origin(0)==64.5f && origin(2)==68.f && setups==2,"camera did not follow animated head translation");
+    // Rotate the head basis: the eye offset must rotate with animation too.
+    matrices[12]=0.f;matrices[13]=-1.f;matrices[16]=1.f;matrices[17]=0.f;view(input,setup.data());
+    Check(std::abs(origin(0)-57.8f)<.001f && origin(1)==104.5f,"head-local eye offset did not follow rotation");
+    matrices[12]=matrices[17]=1.f;matrices[13]=matrices[16]=0.f;
+    Put(header.data(),0x148,0);view(input,setup.data());Check(origin(0)==64.5f,"model without eyes lost head camera");Put(header.data(),0x148,1);
+    setupSucceeds=false;view(input,setup.data());Check(alpha(input)==.25f,"failed bones retained body FPV");setupSucceeds=true;
+    matrices[15]=std::numeric_limits<float>::quiet_NaN();view(input,setup.data());Check(alpha(input)==.25f,"invalid transform applied");matrices[15]=60.f;
+    Put(header.data(),0xf0,300);view(input,setup.data());Check(alpha(input)==.25f,"invalid model count accepted");Put(header.data(),0xf0,2);
+    Put(player.data(),0x6ac,static_cast<void*>(nullptr));view(input,setup.data());Check(alpha(input)==.25f,"missing model retained head camera");Put(player.data(),0x6ac,header.data());
+    // The next model puts its head at index 0: no old bone ID may survive.
+    std::array<uint8_t,0x600> changed=header;Put(changed.data(),0x1a8,int(0x360-0x1a8));Put(changed.data(),0x1a8+0x88,0x100);Put(changed.data(),0xf0,1);Put(changed.data(),0x408,0);
+    matrices[0]=matrices[5]=matrices[10]=1.f;matrices[3]=80.f;matrices[7]=90.f;matrices[11]=65.f;
+    Put(player.data(),0x6ac,changed.data());view(input,setup.data());Check(origin(0)==84.5f && origin(2)==65.f,"model change retained stale head index");Put(player.data(),0x6ac,header.data());
     for (const auto offset:{0x88u,0x15e8u,0x16e0u}) {
         Put(player.data(),offset,1);view(input,setup.data());Check(alpha(input)==.25f,"script camera priority");Put(player.data(),offset,0);
     }
@@ -117,7 +161,7 @@ int wmain(int argc,wchar_t** argv) {
     Check(input[0xf8]==1 && !caine::FirstPersonMeleeEnabled(),"disable did not restore original melee camera");
     ToggleEntry(module.base+0xff87f,input,player.data());
     Check(holsters==1 && input[0xf0]==0 && input[0xf8]==0,"disabled camera toggle changed vanilla holster behavior");
-    set(0,1);set(1,1);think(input);Check(alpha(input)==1.f,"body mode recovery");
+    set(0,1);set(1,1);think(input);view(input,setup.data());Check(alpha(input)==1.f,"body mode recovery");
     caine::InitializeFrameworkPreferences(config);Check(caine::FirstPersonMeleeEnabled() && caine::MeleeBodyCamera(),"restart persistence");
     Check(GetPrivateProfileIntW(L"Unrelated",L"Sentinel",0,config.c_str())==73,"unrelated config changed");
     Check(!caine::WriteFrameworkOption(config,options[0],std::numeric_limits<double>::quiet_NaN()),"nonfinite camera setting");

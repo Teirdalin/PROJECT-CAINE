@@ -9,7 +9,7 @@ function Get-CainePayloadPaths {
 function Assert-CainePathNotRedirected([string]$Path) {
     $current=[IO.Path]::GetFullPath($Path)
     while ($current) {
-        if ((Test-Path -LiteralPath $current) -and ((Get-Item -LiteralPath $current).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Refusing redirected path: $current" }
+        if ((Test-Path -LiteralPath $current) -and ((Get-Item -LiteralPath $current -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Refusing redirected path: $current" }
         $current=[IO.Path]::GetDirectoryName($current)
     }
 }
@@ -38,6 +38,18 @@ function Get-CaineHash([string]$Path) {
     try { return [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant() }
     finally { $sha.Dispose();$stream.Dispose() }
 }
+function Get-CaineLaunchProfile([string]$Root,[string]$Mod) {
+    if (!$Mod -or $Mod -ieq 'Auto') {
+        if ((Test-Path -LiteralPath (Join-Path $Root 'Unofficial_Patch\cfg') -PathType Container) -and
+            (Test-Path -LiteralPath (Join-Path $Root 'Unofficial_Patch\maps') -PathType Container)) { $Mod='Unofficial_Patch' }
+        else { $Mod='Vampire' }
+    }
+    if ($Mod -notmatch '^[A-Za-z0-9_-]+$') { throw 'Invalid game profile name.' }
+    $path=Join-Path $Root $Mod
+    Assert-CainePathNotRedirected $path
+    if (!(Test-Path -LiteralPath $path -PathType Container)) { throw "Mod directory missing: $Mod" }
+    return $Mod
+}
 function Assert-CaineX86([string]$Path) {
     $data = [IO.File]::ReadAllBytes($Path)
     if ($data.Length -lt 64 -or [BitConverter]::ToUInt16($data,0) -ne 0x5A4D) { throw "Not a PE image: $Path" }
@@ -52,7 +64,7 @@ function Assert-CaineInstallRoot([string]$Root) {
     # Never follow directory junctions when installing or removing owned files.
     foreach ($relative in @('Bin','Bin\loader','Bin\loader\CAINE','Bin\loader\KAIN')) {
         $p = Join-Path $Root $relative
-        if ((Test-Path -LiteralPath $p) -and ((Get-Item -LiteralPath $p).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Refusing redirected install directory: $p" }
+        if ((Test-Path -LiteralPath $p) -and ((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Refusing redirected install directory: $p" }
     }
 }
 function Get-CainePackage {

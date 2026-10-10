@@ -90,7 +90,13 @@ int main() {
         meleeAvailable=false;build();
         for(const auto& control:view.controls) if(control.label=="First Person Melee") Check(control.flags&CAINE_CONTROL_DISABLED,"unsupported camera must be unavailable");
         action("First Person Melee","",1);Check(!caine::FirstPersonMeleeEnabled(),"unavailable camera option accepted");meleeAvailable=true;
-        action("Framework");build();action("Interface scale","",150);Check(caine::MenuScale()==1.5f,"live interface scale");
+        action("Framework");build();
+        bool profileShown=false;for (const auto& control:view.controls) profileShown|=control.label=="Active game profile: Unofficial_Patch";
+        Check(profileShown,"active native profile missing from Framework settings");
+        Check(!caine::UnofficialPatchInstalled(root),"missing patch detected");
+        std::filesystem::create_directories(active/"cfg");Check(!caine::UnofficialPatchInstalled(root),"incomplete patch detected");
+        std::filesystem::create_directories(active/"maps");Check(caine::UnofficialPatchInstalled(root),"installed patch not detected");
+        action("Interface scale","",150);Check(caine::MenuScale()==1.5f,"live interface scale");
         build();action("Skip startup logos","",0);Check(commands.empty(),"framework setting dispatched as engine command");
         const auto config=root/"Bin/loader/CAINE/CAINE.ini";
         Check(GetPrivateProfileIntW(L"Startup",L"SkipVideos",1,config.c_str())==0 && GetPrivateProfileIntW(L"Runtime",L"Enabled",0,config.c_str())==1,"framework persistence preserved unrelated settings");

@@ -197,6 +197,7 @@ std::string ReadGameMenuResource(const std::filesystem::path& root,const std::fi
     return result;
 }
 GameMenus::GameMenus(GameMenuBackend backend,std::filesystem::path root,std::filesystem::path active):backend_(std::move(backend)),root_(std::move(root)),active_(std::move(active)),config_(root_/L"Bin/loader/CAINE/CAINE.ini") {
+    patchInstalled_=UnofficialPatchInstalled(root_);
     // These engine variables are not archived by host_writeconfig. Restore only
     // values explicitly chosen in CAINE, and only for the active -game profile.
     const auto section=L"Graphics."+active_.filename().wstring();
@@ -351,6 +352,9 @@ void GameMenus::Build(MenuView& view) {
         }
     }
     if (tab_=="Framework") {
+        text("Active game profile: "+active_.filename().u8string());
+        const bool patchActive=_wcsicmp(active_.filename().c_str(),L"Unofficial_Patch")==0;
+        text(patchInstalled_?(patchActive?"Unofficial Patch: detected and active.":"Unofficial Patch: detected. Start through its shortcut or use -game Unofficial_Patch to enable it. The CAINE launcher selects it automatically."):"Unofficial Patch: not detected in the standard Unofficial_Patch folder. Other mod profiles can be selected with -game.");
         for (const auto& option:FrameworkOptions()) {
             add(option.toggle?CAINE_CONTROL_TOGGLE:CAINE_CONTROL_SLIDER,option.label,{},ReadFrameworkOption(config_,option),option.minimum,option.maximum,CAINE_CONTROL_INTEGER|CAINE_CONTROL_LIVE,
                 [this,option](const std::string&,double value){message_=WriteFrameworkOption(config_,option,value)?(option.live?"Setting applied and saved.":"Setting saved. Restart Bloodlines to apply it."):"Could not save CAINE settings. Check the installation folder's permissions.";return false;});

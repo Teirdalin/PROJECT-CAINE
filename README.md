@@ -14,19 +14,29 @@ plugin API, modern menus, configuration, crash reports and serialization helpers
 CAINE has no AI service dependency. **Bloodlines: Unscripted** is a separate,
 optional AI mod and is not distributed by this repository or framework updater.
 
-Version **0.3.18-framework-dev** is a development prerelease. Native and renderer
+Version **0.3.19-framework-dev** is a development prerelease. Native and renderer
 regressions pass, but live gameplay acceptance remains pending. Character-creation
 crash investigation and optional Unscripted conversation acceptance are not
 claimed resolved by this release. No game binaries or unofficial SDK code are included.
 
 ## Install
 
-1. Download and extract the **PROJECT-CAINE-0.3.18-framework-dev.zip** player asset
+1. Download and extract the **PROJECT-CAINE-0.3.19-framework-dev.zip** player asset
    from [Releases](https://github.com/Teirdalin/PROJECT-CAINE/releases).
 2. Close Bloodlines and its mod selection window.
 3. Double-click **Install PROJECT CAINE.cmd** and select your **Vampire.exe**.
    A compatible existing native loader and its Bin/loader directory are required.
 4. Start Bloodlines with your usual launcher.
+
+The optional **Launch PROJECT CAINE.cmd** asks for Vampire.exe and automatically
+selects the installed `Unofficial_Patch` profile (cfg and maps folders). Without
+it, the launcher uses `Vampire`. Explicit choices remain available:
+`Launch PROJECT CAINE.cmd -GameRoot "D:\Games\Bloodlines" -Mod Vampire`
+or `-Mod Unofficial_Patch` / another installed mod folder. Other launchers can
+start the patch with `Vampire.exe -game Unofficial_Patch`; CAINE loads natively
+with it. CAINE does not replace the patch or switch an already running profile.
+Settings > Framework and the startup log report the detected patch and active
+profile. Saves and configuration stay in the selected game's own profile.
 
 Installation verifies hashes, backs up owned previous files, and retains existing
 configuration, saves and other mods. Modified or unowned files are preserved and

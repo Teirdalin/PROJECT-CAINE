@@ -24,4 +24,5 @@ void InitializeFrameworkPreferences(const std::filesystem::path& config);
 float MenuScale();
 // One resolver for menus, cinematics and profile-specific graphics persistence.
 std::filesystem::path ActiveGameFolder(const std::filesystem::path& root);
+bool UnofficialPatchInstalled(const std::filesystem::path& root);
 }

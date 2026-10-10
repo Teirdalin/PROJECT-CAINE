@@ -2,6 +2,7 @@
 #include <caine/preferences.hpp>
 #include <caine/logging.hpp>
 #include <atomic>
+#include <cmath>
 #include <cstring>
 
 namespace caine {
@@ -22,6 +23,12 @@ using GetData=uint8_t*(__thiscall*)(void*);
 GetWeapon getWeapon{};
 GetData getData{};
 bool lastEnabled{},lastBody{};
+std::atomic<bool> headViewActive{};
+DWORD64 headLogged{};
+void* boneSetupEntry{};
+using ModelHeader=uint8_t*(__thiscall*)(void*,int);
+ModelHeader modelHeader{};
+thread_local bool buildingBones{};
 
 template<class T> T Read(const void* object,size_t offset) {
     T value{};std::memcpy(&value,static_cast<const uint8_t*>(object)+offset,sizeof(value));return value;
@@ -91,6 +98,84 @@ __declspec(naked) void ToggleTail() {
 bool BodyEligible(void* self) {
     return self==input && MeleeBodyCamera() && Read<uint8_t>(input,0xf8)!=0 && Eligible();
 }
+bool Named(const uint8_t* header,uint32_t length,size_t row,const char* name) {
+    const auto offset=Read<int>(header,row);
+    if (offset<=0 || static_cast<uint64_t>(row)+static_cast<uint32_t>(offset)>=length) return false;
+    const auto start=row+static_cast<uint32_t>(offset);
+    const auto count=std::strlen(name);
+    if (start+count>=length) return false;
+    for (size_t i=0;i<count;++i) {
+        const auto a=header[start+i],b=static_cast<uint8_t>(name[i]);
+        if ((a>='A' && a<='Z'?a+32:a)!=(b>='A' && b<='Z'?b+32:b)) return false;
+    }
+    return header[start+count]==0;
+}
+bool RefreshBones(void* setup,void* renderable,int flags,float time) noexcept {
+    buildingBones=true;
+    __try {
+        using Setup=bool(__thiscall*)(void*,void*,int,int,float,int);
+        return reinterpret_cast<Setup>(setup)(renderable,nullptr,-1,flags,time,0);
+    } __finally { buildingBones=false; }
+}
+// The older Bloodlines studio format has 160-byte bones and 60-byte
+// attachments. Resolve the current model each callback, never a saved bone ID.
+// SetupBones refreshes the native animation cache for this frame; inspecting
+// its old matrix alone can leave the camera behind the animated character.
+bool HeadView(void* view,int& bone,bool& eyes) noexcept {
+    if (buildingBones) return false;
+    __try {
+        const auto player=Read<uint8_t*>(base,0x4a0d50);
+        const auto header=modelHeader(player,-1);
+        if (!header || Read<uint32_t>(header,0)!=0x54534449u || Read<uint32_t>(header,4)!=0x9e3u) return false;
+        const auto length=Read<uint32_t>(header,0x8c);
+        const auto count=Read<int>(header,0xf0),index=Read<int>(header,0xf4);
+        if (length<0x1a8 || length>64u*1024u*1024u || count<=0 || count>256 || index<0x1a8 ||
+            static_cast<uint64_t>(index)+static_cast<uint64_t>(count)*160>length) return false;
+        bone=-1;
+        for (int i=0;i<count;++i) if (Named(header,length,static_cast<size_t>(index)+i*160,"Bip01 Head")) { bone=i;break; }
+        if (bone<0) return false;
+        const auto flags=Read<int>(header,static_cast<size_t>(index)+bone*160+0x88)&0xfffc;
+        if (!flags) return false;
+        float local[3]{4.5f,2.2f,0.f}; // stock head-space eye offset when an armor model omits eyes
+        eyes=false;
+        const auto attachments=Read<int>(header,0x148),attachmentIndex=Read<int>(header,0x14c);
+        if (attachments<0 || attachments>256 || (attachments && (attachmentIndex<0x1a8 ||
+            static_cast<uint64_t>(attachmentIndex)+static_cast<uint64_t>(attachments)*60>length))) return false;
+        for (int i=0;i<attachments;++i) {
+            const auto row=static_cast<size_t>(attachmentIndex)+i*60;
+            if (Read<int>(header,row+8)!=bone || !Named(header,length,row,"eyes")) continue;
+            for (size_t j=0;j<3;++j) local[j]=Read<float>(header,row+0x18+j*16);
+            eyes=true;break;
+        }
+        for (const auto value:local) if (!std::isfinite(value) || std::abs(value)>20.f) return false;
+        const auto globals=Read<uint8_t*>(base,0x2b8494);
+        if (!globals) return false;
+        const auto time=Read<float>(globals,0xc);
+        if (!std::isfinite(time)) return false;
+        const auto renderable=player+4;
+        const auto setup=Read<void**>(renderable,0)[0x3c/4];
+        if (setup!=boneSetupEntry) return false;
+        if (!RefreshBones(setup,renderable,flags,time)) return false;
+        const auto matrices=Read<uint8_t*>(player,0x6e8);
+        if (!matrices) return false;
+        float matrix[12]{};std::memcpy(matrix,matrices+bone*48,sizeof(matrix));
+        for (const auto value:matrix) if (!std::isfinite(value)) return false;
+        for (size_t column=0;column<3;++column) {
+            const auto norm=matrix[column]*matrix[column]+matrix[4+column]*matrix[4+column]+matrix[8+column]*matrix[8+column];
+            if (norm<.01f || norm>100.f) return false;
+        }
+        float origin[3]{};
+        for (size_t row=0;row<3;++row) {
+            origin[row]=matrix[row*4+3];
+            for (size_t column=0;column<3;++column) origin[row]+=matrix[row*4+column]*local[column];
+            // Reject stale/invalid transforms without changing the view.
+            const auto previous=Read<float>(view,0x38+row*4);
+            if (!std::isfinite(origin[row]) || !std::isfinite(previous) || std::abs(origin[row]-previous)>256.f) return false;
+        }
+        std::memcpy(static_cast<uint8_t*>(view)+0x38,origin,sizeof(origin));
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 void __fastcall Switch(void* weapon,void*) {
     weaponSwitch(weapon);
     // Leave native camera preferences and weapon data untouched. Only the
@@ -99,6 +184,7 @@ void __fastcall Switch(void* weapon,void*) {
 }
 void __fastcall Think(void* self,void*) {
     if (self==input) {
+        headViewActive=false;
         cameraThread.store(GetCurrentThreadId());
         const bool enabled=FirstPersonMeleeEnabled(),body=MeleeBodyCamera();
         if ((enabled!=lastEnabled || (enabled && body!=lastBody)) && Ordinary()) {
@@ -112,14 +198,22 @@ void __fastcall Think(void* self,void*) {
     cameraThink(self);
 }
 void __fastcall View(void* self,void*,void* view) {
-    // This boundary runs after the game has calculated its eye position and
-    // aim angles. Preserve those for body FPV; native third-person rendering
-    // still supplies the existing character and melee animation.
-    if (BodyEligible(self)) return;
+    headViewActive=false;
+    if (BodyEligible(self)) {
+        int bone=-1;bool eyes=false;
+        headViewActive=HeadView(view,bone,eyes);
+        const auto now=GetTickCount64();
+        if (!headLogged || now-headLogged>=5000) {
+            headLogged=now;
+            TraceLog("CAINE_MELEE_HEAD_VIEW: active="+std::to_string(headViewActive)+" bone="+std::to_string(bone)+" eyes_attachment="+std::to_string(eyes));
+        }
+        // Only the origin follows animation. Mouse aim remains authoritative.
+        if (headViewActive) return;
+    }
     cameraView(self,view);
 }
 float __fastcall Alpha(void* self,void*) {
-    if (BodyEligible(self)) return 1.f;
+    if (headViewActive && BodyEligible(self)) return 1.f;
     return modelAlpha(self);
 }
 bool Bytes(const Module& module,size_t rva,std::initializer_list<uint8_t> bytes) {
@@ -139,10 +233,13 @@ bool InstallMeleeCamera(const Module& client,const std::function<void(const std:
         !client.Executable(0x9b210,getter.size()) || std::memcmp(base+0x9b210,getter.data(),getter.size()) ||
         Read<uint8_t*>(base,0x224d4c+0x7c)!=base+0xffb00 ||
         Read<uint8_t*>(base,0x224d4c+0xd4)!=base+0xffaf0 ||
+        !Bytes(client,0x8f900,{0x8b,0x44,0x24,0x04,0x56,0x85,0xc0,0x8b,0xf1}) ||
+        !Bytes(client,0x919c0,{0xb8,0x30,0x27,0,0,0xe8,0x36,0xf5,0x13,0}) ||
         !Bytes(client,0xff8ee,{0x5f,0x5e,0x5d,0xc3})) {
         log("CAINE_MELEE_CAMERA_UNAVAILABLE: native camera/weapon contract mismatch");return false;
     }
     getWeapon=reinterpret_cast<GetWeapon>(base+0x9b210);getData=reinterpret_cast<GetData>(base+0x7b160);
+    modelHeader=reinterpret_cast<ModelHeader>(base+0x8f900);boneSetupEntry=base+0x919c0;
     toggleReturn=base+0xff8ee;
     auto hooks=new Hooks();std::string error;
     const std::vector<HookRequest> batch{
@@ -168,5 +265,6 @@ void TestMeleeOriginals(void* think,void* view,void* alpha) {
     cameraView=reinterpret_cast<decltype(cameraView)>(view);
     modelAlpha=reinterpret_cast<decltype(modelAlpha)>(alpha);
 }
+void TestMeleeBoneSetup(void* setup) { boneSetupEntry=setup; }
 #endif
 }

@@ -5,13 +5,20 @@ Changes apply on the native camera thread and persist in the existing CAINE.ini:
 `[Gameplay] FirstPersonMelee=0|1`, `MeleeBodyCamera=0|1` (default 1).
 This is a framework feature; Bloodlines: Unscripted is not required.
 
-When enabled, ordinary melee keeps the native eye position if the player's
+When enabled, ordinary melee uses a first-person camera if the player's
 camera preference is first person. The normal camera toggle can still choose
 third person. The feature supports two presentations:
 
 - **Body camera (experimental):** retain the native third-person character and
-  melee animations, but omit the chase-camera position and angle adjustment.
-  Keep the character's camera-distance opacity at 1. This offers visible native
+  melee animations. Refresh the native animation cache and attach the camera
+  origin to `Bip01 Head`, using the model's bone-local `eyes` attachment offset.
+  Both translations and rotations of the animated head move the camera position;
+  mouse aim stays unchanged so animation does not steer the player's aim.
+  Armor models without a named eyes attachment use the stock head-local eye
+  offset (4.5, 2.2, 0). The head name is resolved from the current model every
+  callback, so model changes and loads cannot retain another model's bone ID.
+  Keep the character's camera-distance opacity at 1 only after a valid head view.
+  This offers visible native
   animations without manufacturing a set of first-person animation assets.
 - **Native first person (custom viewmodels):** suppress the ordinary melee
   forced-third-person flag. The stock installed melee definitions use
@@ -32,6 +39,13 @@ toggle's selected preference and avoids its subsequent inven_holster command
 only for eligible opt-in melee. Its registers, flags and native epilogue remain
 intact; disabling the feature restores that original branch.
 The native CInput object/vtable and active-weapon/data helpers are also verified.
+The head camera independently verifies GetModelPtr (0x8f900), SetupBones
+(0x919c0), and the installed player renderable's SetupBones entry. The installed
+studio header version is 0x9e3, with length at 0x8c, 160-byte bones and 60-byte
+attachments. Their tables, names, offsets, native matrices and final positions
+are bounded and validated before changing the view. Missing or invalid data
+returns to the native chase camera and opacity. A reentrancy guard prevents a
+bone callback recursively rebuilding the camera.
 An unknown client or altered target disables this feature without replacing
 another mod's hook or disabling CAINE's other systems.
 
@@ -65,14 +79,23 @@ view/opacity/think continuations allow their state and calling convention to be
 checked without launching gameplay. Tests cover off/on, both modes, restoring
 the original route, death/dialogue/ladder/cinematic guards, explicit third person, ranged
 weapons, missing entities, configuration reload, thread exclusion and a camera
-hook conflict. The real Gameplay menu persistence and a D3D9 render preview
+hook conflict. Head-camera tests additionally cover animated translation and
+rotation, model replacement, missing attachments, malformed headers, invalid
+matrices and native bone-setup failure. They execute the installed GetModelPtr
+helper, with a controlled SetupBones continuation that verifies its calling
+convention; they do not execute the full live animation renderer. A read-only
+live check confirmed the current player's version, head index and SetupBones
+entry against that contract. All 59 installed player models have Bip01 Head;
+some armor/beast models omit named eyes attachments.
+The real Gameplay menu persistence and a D3D9 render preview
 also have regression checks.
 
 These checks do **not** establish live combat rendering or animation quality.
 Test fists and several weapons, each clan/gender model, standing/crouching,
 looking down, close walls, attack/block/combos, gun switching, feeding, stealth
 kills, ladders, disciplines, death, dialogue, save/load and cinematic return.
-The body camera may show head/body clipping and animation alignment problems;
-head-bone clipping or separate arms assets remain future development. It stays
+The head camera still needs acceptance for facial/body clipping and animation
+alignment on every model; per-view head hiding or separate arms assets remain
+future development. It stays
 opt-in pending that visual acceptance. The native first-person mode may retain
 the game's short camera-distance transition; no global camera fade is patched.

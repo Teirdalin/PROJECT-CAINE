@@ -451,7 +451,18 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
             const float imageHeight=imageWidth*static_cast<float>(logo->height)/static_cast<float>(logo->width);
             const float fit=std::min(1.0f,height*.64f/imageHeight);
             const ImVec2 start{(width-imageWidth*fit)*.5f,height*.50f-imageHeight*fit*.5f};
-            draw->AddImage(reinterpret_cast<ImTextureID>(logo->texture.Get()),start,{start.x+imageWidth*fit,start.y+imageHeight*fit});
+            const ImVec2 end{start.x+imageWidth*fit,start.y+imageHeight*fit};
+            draw->AddImage(reinterpret_cast<ImTextureID>(logo->texture.Get()),start,end);
+            // Feather the artwork into the black canvas without editing the
+            // source image or putting a visible rectangular matte around it.
+            const float feather=(end.y-start.y)*.10f;
+            constexpr int steps=32;
+            auto shade=[](float t) { const float fade=1.f-t*t*(3.f-2.f*t);return IM_COL32(0,0,0,static_cast<int>(std::round(fade*255.f))); };
+            for (int i=0;i<steps;++i) {
+                const float a=static_cast<float>(i)/steps,b=static_cast<float>(i+1)/steps;
+                draw->AddRectFilledMultiColor({start.x,start.y+feather*a},{end.x,start.y+feather*b},shade(a),shade(a),shade(b),shade(b));
+                draw->AddRectFilledMultiColor({start.x,end.y-feather*b},{end.x,end.y-feather*a},shade(b),shade(b),shade(a),shade(a));
+            }
         }
         const float buttonWidth=std::min(250*scale,width*.22f);
         const float buttonHeight=46*scale;
@@ -475,7 +486,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
         }
         if(view.update.available && ImGui::Button("Update Available",{buttonWidth,buttonHeight}))actions.push_back({MenuActionKind::Update,{}});
         ImGui::End();ImGui::PopStyleColor(3);ImGui::PopStyleVar(2);
-        const char* version="PROJECT CAINE 0.3.18";
+        const char* version="PROJECT CAINE 0.3.19";
         const auto size=ImGui::CalcTextSize(version);
         draw->AddText({(width-size.x)/2,height-28*scale},IM_COL32(145,136,141,255),version);
     } else if (view.confirmation) {
@@ -589,7 +600,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
     } else ImGui::TextWrapped("Select a mod to view its details and settings.");
     ImGui::EndChild(); ImGui::Separator();
     if (ImGui::Button("Back to main menu")) actions.push_back({MenuActionKind::Close,{}});
-    ImGui::SameLine(); ImGui::TextDisabled("  ESC  /  Close     |     CAINE 0.3.18");
+    ImGui::SameLine(); ImGui::TextDisabled("  ESC  /  Close     |     CAINE 0.3.19");
     ImGui::End();
     }
     if(view.updateOpen) {
