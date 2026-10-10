@@ -110,6 +110,33 @@ void Theme(float scale) {
     c[ImGuiCol_NavCursor] = {0.9f,0.4f,0.4f,1};
     style.ScaleAllSizes(scale); ImGui::GetStyle() = style;
 }
+bool DrawOverlayPointer(const ImVec2& point, float scale) {
+    if (!ImGui::IsMousePosValid(&point)) return false;
+    const auto viewport=ImGui::GetMainViewport();
+    if (point.x<viewport->Pos.x || point.y<viewport->Pos.y ||
+        point.x>=viewport->Pos.x+viewport->Size.x || point.y>=viewport->Pos.y+viewport->Size.y) return false;
+    // Use the same solid-pixel geometry as the UI, independently of ImGui's
+    // cursor atlas and the engine's OS/VGUI cursor visibility. Draw last.
+    auto draw=ImGui::GetForegroundDrawList();
+    const float size=std::clamp(scale,0.85f,1.5f);
+    const auto at=[&](float x,float y) { return ImVec2{point.x+x*size,point.y+y*size}; };
+    const auto white=IM_COL32(255,255,255,255),black=IM_COL32(8,6,9,255);
+    draw->PushClipRect(viewport->Pos,{viewport->Pos.x+viewport->Size.x,viewport->Pos.y+viewport->Size.y},false);
+    if (ImGui::GetMouseCursor()==ImGuiMouseCursor_TextInput) {
+        draw->AddLine(at(0,-10),at(0,10),black,4*size);
+        draw->AddLine(at(-4,-10),at(4,-10),black,4*size);
+        draw->AddLine(at(-4,10),at(4,10),black,4*size);
+        draw->AddLine(at(0,-10),at(0,10),white,2*size);
+        draw->AddLine(at(-4,-10),at(4,-10),white,2*size);
+        draw->AddLine(at(-4,10),at(4,10),white,2*size);
+    } else {
+        draw->AddTriangleFilled(at(0,0),at(0,23),at(18,16),white);
+        draw->AddQuadFilled(at(6,16),at(11,26),at(15,24),at(10,14),white);
+        const ImVec2 outline[]{at(0,0),at(0,23),at(6,18),at(11,26),at(15,24),at(11,16),at(18,16)};
+        draw->AddPolyline(outline,static_cast<int>(std::size(outline)),black,ImDrawFlags_Closed,2*size);
+    }
+    draw->PopClipRect();return true;
+}
 }
 struct MenuRenderer::State {
     ImGuiContext* context{};
@@ -261,7 +288,8 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
     // Poll for releases lost during an Alt-Tab. Queued events still preserve quick clicks.
     const bool pressed = foreground && (GetAsyncKeyState(VK_LBUTTON) & 0x8000);
     if (!queuedButton) io.AddMouseButtonEvent(0, pressed);
-    if (view.overlay && (!s.inputChecked || now-s.inputChecked>=5000)) {
+    const bool traceInput=view.overlay && (!s.inputChecked || now-s.inputChecked>=5000);
+    if (traceInput) {
         s.inputChecked=now;
         TraceLog("CAINE_OVERLAY_INPUT_FRAME: foreground="+std::to_string(foreground)+" cursor_valid="+std::to_string(cursorValid)+
             " cursor_x="+std::to_string(cursor.x)+" cursor_y="+std::to_string(cursor.y)+
@@ -271,9 +299,9 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
     if (view.wantsText != s.previousText) { io.ClearInputKeys(); s.previousText = view.wantsText; }
     if (!ImGui_ImplDX9_CreateDeviceObjects()) return false;
     ImGui_ImplDX9_NewFrame(); ImGui::NewFrame();
-    // Gameplay overlays have no native cursor. Native menus keep their own
-    // cursor, avoiding the double pointer that would result from drawing both.
-    io.MouseDrawCursor = view.overlay && !view.intro;
+    // The foreground pointer below owns gameplay overlays. Native menus keep
+    // their existing cursor, and passive cinematic overlays draw none.
+    io.MouseDrawCursor = false;
     if (view.intro) {
         // Passive overlay: preserve the cinematic, draw no menu/cursor/widgets.
         auto draw=ImGui::GetForegroundDrawList();
@@ -447,7 +475,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
         }
         if(view.update.available && ImGui::Button("Update Available",{buttonWidth,buttonHeight}))actions.push_back({MenuActionKind::Update,{}});
         ImGui::End();ImGui::PopStyleColor(3);ImGui::PopStyleVar(2);
-        const char* version="PROJECT CAINE 0.3.16";
+        const char* version="PROJECT CAINE 0.3.17";
         const auto size=ImGui::CalcTextSize(version);
         draw->AddText({(width-size.x)/2,height-28*scale},IM_COL32(145,136,141,255),version);
     } else if (view.confirmation) {
@@ -561,7 +589,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
     } else ImGui::TextWrapped("Select a mod to view its details and settings.");
     ImGui::EndChild(); ImGui::Separator();
     if (ImGui::Button("Back to main menu")) actions.push_back({MenuActionKind::Close,{}});
-    ImGui::SameLine(); ImGui::TextDisabled("  ESC  /  Close     |     CAINE 0.3.16");
+    ImGui::SameLine(); ImGui::TextDisabled("  ESC  /  Close     |     CAINE 0.3.17");
     ImGui::End();
     }
     if(view.updateOpen) {
@@ -616,6 +644,17 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
         }
     }
     s.ClearClipboard();
+    ImVec2 pointer=io.MousePos;
+    // A fresh OS position remains available while ImGui trickles a burst of
+    // queued input. Keep the visible pointer responsive, including first frame.
+    if (cursorValid) pointer={static_cast<float>(cursor.x)*width/static_cast<float>(client.right),
+        static_cast<float>(cursor.y)*height/static_cast<float>(client.bottom)};
+    if (window && !foreground && !mouseEvents) pointer={-FLT_MAX,-FLT_MAX};
+    const bool pointerDrawn=view.overlay && DrawOverlayPointer(pointer,scale);
+    if (traceInput) TraceLog("CAINE_OVERLAY_CURSOR: drawn="+std::to_string(pointerDrawn)+
+        " x="+std::to_string(pointer.x)+" y="+std::to_string(pointer.y)+
+        " ui_x="+std::to_string(io.MousePos.x)+" ui_y="+std::to_string(io.MousePos.y)+
+        " shape="+std::to_string(ImGui::GetMouseCursor()));
     ImGui::Render();
     ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
     // The renderer owns default-pool buffers only inside this frame. Bloodlines

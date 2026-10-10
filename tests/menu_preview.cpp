@@ -76,7 +76,7 @@ int wmain(int argc, wchar_t** argv) {
                 view.pageTitle="Quit to Desktop?";view.confirmation=true;
                 view.controls={{CAINE_CONTROL_TEXT,0,0,0,"Any unsaved progress will be lost."},{CAINE_CONTROL_BUTTON,1,0,0,"Quit to Desktop"},{CAINE_CONTROL_BUTTON,2,0,0,"Cancel"}};
             }
-            if (mode==L"ambient") {
+            if (mode==L"ambient" || mode==L"ambient-transition") {
                 view.pageTitle="Bloodlines: Unscripted";view.overlay=true;view.wantsText=true;
                 view.controls={{CAINE_CONTROL_HEADING,0,0,0,"Jack Tutorial"},{CAINE_CONTROL_TEXT,10,0,0,"Write what you would like to say below."},{CAINE_CONTROL_INPUT,1,CAINE_CONTROL_SUBMIT,8192,"Your reply"}};
             }
@@ -144,13 +144,24 @@ int wmain(int argc, wchar_t** argv) {
                 if ((message>=WM_MOUSEFIRST && message<=WM_MOUSELAST) || message==WM_KEYDOWN || message==WM_KEYUP || message==WM_CHAR) { renderer.Input(message,value,data);return 0; }
                 return {};
             }),"real Windows queue capture");
+            if (mode==L"ambient-transition") {
+                caine::MenuView main;main.home=true;main.background=argv[2];main.nativeItems={{0,"New Game"},{1,"Load Game"},{4,"Settings"},{5,"Mods"},{10,"Quit"}};
+                Check(SUCCEEDED(device->BeginScene()),"main transition BeginScene");
+                Check(renderer.Render(window,main,events),"main before dialogue");
+                Check(SUCCEEDED(device->EndScene()),"main transition EndScene");
+                renderer.ClearInput();
+            }
             for (int phase=0; phase<2; ++phase) {
                 for (int frame=0; frame<4; ++frame) {
                     if (mode==L"ambient") renderer.Input(WM_MOUSEMOVE,0,MAKELPARAM(1550,780));
+                    if (mode==L"ambient-transition") {
+                        RECT client{};Check(GetClientRect(window,&client)!=FALSE,"transition client rectangle");
+                        renderer.Input(WM_MOUSEMOVE,0,MAKELPARAM(100*client.right/width,100*client.bottom/height));
+                    }
                     device->Clear(0,nullptr,D3DCLEAR_TARGET,D3DCOLOR_XRGB(15,10,13),1,0);
                     device->SetRenderState(D3DRS_FOGENABLE, TRUE); device->SetRenderState(D3DRS_LIGHTING, TRUE);
                     Check(SUCCEEDED(device->BeginScene()),"BeginScene");
-                    Check(renderer.Render(mode==L"ambient"?window:nullptr,view,events),"UI render");
+                    Check(renderer.Render(mode==L"ambient" || mode==L"ambient-transition"?window:nullptr,view,events),"UI render");
                     DWORD fog{}, lighting{}; device->GetRenderState(D3DRS_FOGENABLE,&fog); device->GetRenderState(D3DRS_LIGHTING,&lighting);
                     Check(fog == TRUE && lighting == TRUE,"UI leaked render state");
                     Check(SUCCEEDED(device->EndScene()),"EndScene");
@@ -166,6 +177,18 @@ int wmain(int argc, wchar_t** argv) {
                             visible|=(pixel&0xffffff)==0xffffff;
                         }
                         copy->UnlockRect();Check(visible,"gameplay overlay software cursor did not render");
+                    }
+                    if (mode==L"ambient-transition") {
+                        ComPtr<IDirect3DSurface9> target,copy;D3DSURFACE_DESC desc{};
+                        device->GetRenderTarget(0,&target);target->GetDesc(&desc);
+                        Check(SUCCEEDED(device->CreateOffscreenPlainSurface(width,height,desc.Format,D3DPOOL_SYSTEMMEM,&copy,nullptr)),"transition cursor surface");
+                        Check(SUCCEEDED(device->GetRenderTargetData(target.Get(),copy.Get())),"transition cursor pixels");
+                        D3DLOCKED_RECT rect{};Check(SUCCEEDED(copy->LockRect(&rect,nullptr,D3DLOCK_READONLY)),"transition cursor lock");
+                        bool visible{};for (UINT y=101;y<125;++y) for (UINT x=97;x<119;++x) {
+                            const auto pixel=reinterpret_cast<const DWORD*>(static_cast<const BYTE*>(rect.pBits)+y*rect.Pitch)[x];
+                            visible|=(pixel&0xffffff)==0xffffff;
+                        }
+                        copy->UnlockRect();Check(visible,"main-to-conversation foreground pointer missing");
                     }
                     if (mode==L"intro") {
                         ComPtr<IDirect3DSurface9> target,copy;D3DSURFACE_DESC desc{};

@@ -22,12 +22,12 @@ using FilenameFn=const char*(__thiscall*)(void*);
 PacketFn packetOriginal{};VoidFn releaseOriginal{},paintOriginal{};
 ActiveFn activeOriginal{};PickFn pickOriginal{};
 FilenameFn filename{};
-void* useContinuation{};
+void* useContinuation{};void* pedestrianContinuation{};
 caine::Hooks* hooks{};
 uint8_t* gameBase{};
 std::recursive_mutex mutex;
 std::function<void(const std::string&)> logger;
-std::atomic<bool> ready{},attempted{};
+std::atomic<bool> ready{},attempted{},pedestrianReady{};
 struct Live {
     CaineDialogueV1 copied{};
     void* dialog{};
@@ -84,6 +84,26 @@ std::string Utf8(const std::string& text) {
     std::string result(bytes,'\0');WideCharToMultiByte(CP_UTF8,0,wide.data(),length,result.data(),bytes,nullptr,nullptr);
     return result;
 }
+std::string PedestrianIdentity(const void* npc) {
+    try {
+    // Field offsets independently confirmed in this module's own save-field
+    // metadata and its name/dialogue readers. Only the exact module profile
+    // below can reach this read-only adapter.
+    if (!Readable(npc,0x270) || !Field<void*>(npc,0x98) ||
+        Field<int>(npc,0x200)!=0 || Field<int>(npc,0x210)<=0) return {};
+    const auto type=Field<const char*>(npc,0x11c),name=Field<const char*>(npc,0x26c);
+    const auto dialogue=Field<const char*>(npc,0x128);
+    if (!Readable(type,32) || Text(type,0,32)!="npc_VPedestrian" ||
+        !Readable(name,256) || (dialogue && (!Readable(dialogue,1) || *dialogue))) return {};
+    const auto identity=Utf8(Text(name,0,256));if (identity.empty()) return {};
+    // Distinct from a .dlg source. An installed-map resolver in the consuming
+    // mod must prove a unique authored entity/spawner; no handle is persisted.
+    std::string source="entity://npc_vpedestrian/";
+    constexpr char hex[]="0123456789abcdef";
+    for (const unsigned char byte:identity) { source+=hex[byte>>4];source+=hex[byte&15]; }
+    return source;
+    } catch (...) { return {}; } // An invalid live string is never a usable identity.
+}
 bool HandleExists(uint32_t handle) {
     if (handle==UINT32_MAX) return false;
     const auto entries=Field<const uint8_t*>(gameBase,0x566458);
@@ -131,6 +151,11 @@ bool Current() {
     if (live.ambient) return live.copied.token && live.thread==GetCurrentThreadId() &&
         HandleExists(live.copied.npcHandle) && HandleExists(live.copied.playerHandle) &&
         HandleFor(LocalEntity())==live.copied.playerHandle &&
+        (strncmp(live.copied.source,"entity://",9)!=0 || [&] {
+            const auto entries=Field<const uint8_t*>(gameBase,0x566458);
+            const auto npc=Field<const void*>(entries,static_cast<size_t>(caine::native::EntityHandle{live.copied.npcHandle}.Index())*12+4);
+            return PedestrianIdentity(npc)==live.copied.source;
+        }()) &&
         (live.owner || GetTickCount64()-live.created<2000);
     if (!live.dialog || !live.copied.token || live.thread!=GetCurrentThreadId() ||
         !Readable(live.dialog,0x2838) || !HandleExists(live.copied.npcHandle) || !HandleExists(live.copied.playerHandle)) return false;
@@ -152,6 +177,38 @@ bool Visible() {
 void Invalidate(bool all=true,const char* reason="native state changed") {
     if (live.copied.token || (all && pendingUse.captured)) caine::TraceLog("CAINE_DIALOGUE_INVALIDATED: token="+std::to_string(live.copied.token)+" pending_use="+std::to_string(pendingUse.captured!=0)+" reason="+reason);
     live={};++nextToken;if (all) pendingUse={};
+}
+// The native 80-unit forward trace has already rejected excluded entities.
+// Observe its direct pedestrian hit before CanUse rejects dialogueless people.
+// Return through the unmodified predicate; never force a native dialogue/Use.
+void __cdecl ObservedPedestrian(void* npc,void* player) noexcept {
+    if (!ready.load() || !pedestrianReady.load()) return;
+    try {
+        std::lock_guard<std::recursive_mutex> lock(mutex);
+        if (!Readable(player,0x2094) || !(Field<uint32_t>(player,0x208c)&0x20) ||
+            (live.copied.token && Current())) return;
+        const auto source=PedestrianIdentity(npc);if (source.empty()) return;
+        const auto entity=LocalEntity();if (!entity || Field<void*>(entity,0xa8)!=player) return;
+        PendingUse next;auto& copy=next.copied;
+        copy.npcHandle=HandleFor(npc);copy.playerHandle=HandleFor(entity);
+        if (copy.npcHandle==UINT32_MAX || copy.npcHandle==copy.playerHandle) return;
+        copy.size=sizeof(copy);copy.line=-1;strcpy_s(copy.source,source.c_str());
+        next.thread=GetCurrentThreadId();next.captured=GetTickCount64();pendingUse=next;
+        logger("CAINE_PEDESTRIAN_USE: handle="+std::to_string(copy.npcHandle)+"; waiting for native dialogue priority");
+    } catch (...) { logger("CAINE_PEDESTRIAN_USE_REJECTED: invalid entity context"); }
+}
+__declspec(naked) void BeforePedestrianPredicate() {
+    __asm {
+        pushfd
+        pushad
+        push esi
+        push edi
+        call ObservedPedestrian
+        add esp,8
+        popad
+        popfd
+        jmp dword ptr [pedestrianContinuation]
+    }
 }
 // PlayerUse has already selected and accepted this NPC. EDI is its base entity;
 // ESI is the player's component. We observe the press edge, never scripted Use.
@@ -286,7 +343,12 @@ bool InstallNativeBridge(const std::function<void(const std::string&)>& log) {
                 if (!error.empty()) log("CAINE_NATIVE_BRIDGE_DISABLE_FAILED: "+error);
                 throw std::runtime_error(failure);
             }
-        hooks=owner;ready.store(true);log("CAINE_NATIVE_BRIDGE_READY: accepted NPC use, native dialogue priority, serial-validated handles, deferred choices and player FOV; gameplay acceptance pending");return true;
+        // Optional observation must not disable working scripted/ambient dialogue
+        // if another mod owns this trace boundary. Retain partial trampolines.
+        pedestrianReady.store(owner->InstallBatch(game,{
+            {{"native.npc.pedestrian_trace",GameHash,0x167674,{0x8b,0x11,0x56,0xff,0x92,0x9c,0x04,0,0}},reinterpret_cast<void*>(BeforePedestrianPredicate),&pedestrianContinuation}},error));
+        if (!pedestrianReady.load()) log("CAINE_PEDESTRIAN_BRIDGE_UNAVAILABLE: "+error);
+        hooks=owner;ready.store(true);log("CAINE_NATIVE_BRIDGE_READY: accepted NPC use, native dialogue priority, serial-validated handles, deferred choices and player FOV; pedestrian_trace="+std::to_string(pedestrianReady.load())+"; gameplay acceptance pending");return true;
     } catch (const std::exception& failure) { log(std::string("CAINE_NATIVE_BRIDGE_UNAVAILABLE: ")+failure.what());return false; }
 }
 bool ReadNativeDialogue(CaineDialogueV1& output) {
@@ -344,6 +406,11 @@ void PulseNativeBridge(HWND window,const std::function<void(const std::string&)>
     const auto candidate=pendingUse;pendingUse={};
     if (live.copied.token && Visible()) { TraceLog("CAINE_AMBIENT_HANDOFF_CANCELLED: native dialogue has priority");return; }
     if (!HandleExists(candidate.copied.npcHandle) || HandleFor(entity)!=candidate.copied.playerHandle) { TraceLog("CAINE_AMBIENT_HANDOFF_CANCELLED: NPC/player handle changed");return; }
+    if (strncmp(candidate.copied.source,"entity://",9)==0) {
+        const auto entries=Field<const uint8_t*>(gameBase,0x566458);
+        const auto npc=Field<const void*>(entries,static_cast<size_t>(caine::native::EntityHandle{candidate.copied.npcHandle}.Index())*12+4);
+        if (PedestrianIdentity(npc)!=candidate.copied.source) { TraceLog("CAINE_AMBIENT_HANDOFF_CANCELLED: pedestrian identity/life changed");return; }
+    }
     Invalidate();live.copied=candidate.copied;live.copied.token=++nextToken;
     live.thread=GetCurrentThreadId();live.created=GetTickCount64();live.ambient=true;
     logger("CAINE_AMBIENT_CONVERSATION: token="+std::to_string(live.copied.token)+" source="+live.copied.source);
@@ -378,6 +445,8 @@ void TestNativeOriginals(void* packet,void* release,void* paint,void* active,voi
     pickOriginal=reinterpret_cast<PickFn>(pick);filename=reinterpret_cast<FilenameFn>(file);
 }
 void TestNativeInteractionContinuation(void* continuation) { useContinuation=continuation; }
+void TestPedestrianContinuation(void* continuation) { pedestrianContinuation=continuation; }
+bool TestPedestrianAvailable() { return pedestrianReady.load(); }
 void TestNativeFovConfig(int value) { fovRead=true;desiredFov=value?std::optional<int>(value):std::nullopt; }
 void TestExpirePendingUse() { if (pendingUse.captured) pendingUse.captured=GetTickCount64()-751; }
 void TestReloadFovConfig() { fovRead=false;desiredFov.reset(); }

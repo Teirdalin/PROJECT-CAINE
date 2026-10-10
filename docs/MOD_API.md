@@ -129,3 +129,10 @@ as zero responses and line -1. An opening may be empty. Such contexts allow free
 presentation and closure only; source identity never grants native quest actions.
 Consumers supporting this mode declare minimumFramework 0.3.11. See the native
 interoperability document for ownership and lifetime details.
+
+Since 0.3.17 a dialogueless living pedestrian can supply an ambient source in the
+form `entity://npc_vpedestrian/<hex UTF-8 targetname>`. No file or native dialogue
+row is implied. Consumers must resolve a unique installed entity/spawner on the
+authoritative current map and reject ambiguous/unknown identities. Declare
+minimumFramework 0.3.17 for this mode; persistent people never use engine handles
+as their identity. The copied packet layout and mod ABI v1 are unchanged.

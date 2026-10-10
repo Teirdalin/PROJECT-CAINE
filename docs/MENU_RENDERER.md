@@ -1,4 +1,4 @@
-# Modern menus (CAINE 0.3.16)
+# Modern menus (CAINE 0.3.17)
 
 CAINE draws inside Bloodlines with Dear ImGui 1.91.9b and the upstream DirectX 9
 backend. Normal startup through the native loader is retained.
@@ -35,7 +35,7 @@ and use the installed `_setvideomode` command. Video changes may require restart
 non-archived `fps_max` and `mat_trilinear` preferences in a profile-specific INI
 section, restoring only values explicitly selected in CAINE. No launch arguments
 are rewritten. Framework preferences expose the existing runtime options with
-restart requirements, plus live 75–150% interface scaling and verbosity.
+restart requirements, plus live 75â€“150% interface scaling and verbosity.
 
 Save/Load lists scan only the active `-game` folder. The browser does not rewrite
 save files: confirmed actions dispatch native save/load commands so the engine
@@ -181,3 +181,20 @@ are mapped locally to execute the production cursor detours, including native
 passthrough. These checks do not establish live NPC, fullscreen or Alt-Tab
 acceptance. Input diagnostics record cursor validity, foreground state, client
 dimensions and event counts every five seconds, without keys or typed text.
+
+## Conversation pointer (0.3.17)
+
+The latest 0.3.16 gameplay log confirms a submitted player message and an AI
+reply, while the player still reported an invisible cursor. Input delivery and
+cursor presentation therefore need separate validation. Gameplay overlays now
+draw a white arrow or text I-beam as final foreground geometry, using the same
+solid-pixel path as the visible UI. They no longer depend on the font atlas's
+cursor sprites or OS/VGUI cursor visibility. The native main/pause menu cursor
+and cinematic overlay behavior remain unchanged. A fresh validated client-space
+position keeps the pointer responsive during queued event bursts; otherwise the
+processed UI position is used. Focus loss without mouse events hides the pointer.
+
+Bounded `CAINE_OVERLAY_CURSOR` diagnostics add the drawn flag, pointer and processed
+UI positions and shape. They contain no message text or credentials. A 1280x720
+pixel-readback regression covers main menu to conversation, first-frame pointer,
+device Reset and rerender. Live NPC cursor visibility still needs player acceptance.

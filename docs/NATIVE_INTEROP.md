@@ -149,6 +149,40 @@ limited to exact profiles. Runtime patch conflicts are rejected, not overwritten
 
 ## Extending recovery
 
+### Dialogueless pedestrians (0.3.17)
+
+An independently inspected direct-hit boundary at game RVA `0x167674` supplies
+EDI as the trace entity and ESI as the local player's component, immediately
+before the original NPC CanUse predicate. The native short-range forward trace
+and excluded-entity check have already run. CAINE observes only a fresh use press,
+the exact `npc_VPedestrian` class, a nonempty target name, living state/positive
+health, no dialogue source, a present NPC adapter and serial-validated handles.
+It preserves registers/flags and continues through the original predicate.
+It never forces a native Use, feeding action, scripted dialogue or quest action.
+The exact game hash and complete overwritten instruction bytes are mandatory.
+The trace is optional: a conflicting live patch disables pedestrian observation
+while the existing scripted/ambient dialogue bridge continues working.
+
+Confirmed entity fields are the NPC adapter at `0x98`, classname at `0x11c`,
+dialogue source at `0x128`, life state at `0x200`, health at `0x210`, and target
+name at `0x26c`. The string/health/life offsets were checked against the installed
+module's own save-field metadata and read functions. These are partial, profile-
+specific views, not reconstructed full class headers.
+
+The ambient packet uses `entity://npc_vpedestrian/<hex UTF-8 targetname>` instead
+of fabricating a dialogue filename. Response count remains zero and line -1;
+native dialogue retains its 750 ms priority window. Death, identity change,
+serial reuse and save/load invalidate this context. A consumer must match the
+target to exactly one authored entity or single-live-child spawner on the current
+installed map before constructing a persistent personality. Unnamed, ambiguous,
+multi-child and unmatched pedestrians are unsupported. Stable map/spawner identity
+does not yet distinguish successive replacements from an infinitely respawning
+maker; general spawn-instance persistence remains future work.
+
+Tests execute the production detour in the mapped installed game binary, covering
+the living pedestrian, dead/combatant/scripted rejection, fresh press, serial reuse
+and closure. These checks do not establish live trace selection or NPC acceptance.
+
 Start with `tools/inspect_game.py` and `tools/recover_native_metadata.py` against the
 actual installation. The latter records PE/CLR status, observed interface names and
 candidate Python method records. A string or candidate record does not prove a

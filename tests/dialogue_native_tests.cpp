@@ -8,6 +8,8 @@
 namespace caine {
 void TestNativeOriginals(void*,void*,void*,void*,void*,void*);
 void TestNativeInteractionContinuation(void*);
+void TestPedestrianContinuation(void*);
+bool TestPedestrianAvailable();
 void TestExpirePendingUse();void TestNativeFovConfig(int);void TestReloadFovConfig();
 }
 namespace {
@@ -37,11 +39,18 @@ template<class T> void Put(void* object,size_t offset,T value) { memcpy(static_c
 }
 int wmain(int argc,wchar_t** argv) {
     try {
-        Check(argc==3,"supply installed game and client DLLs");
+        Check(argc==3 || argc==4,"supply installed game and client DLLs [pedestrian-conflict]");
+        const bool pedestrianConflict=argc==4;
         const auto game=LoadLibraryExW(argv[1],nullptr,DONT_RESOLVE_DLL_REFERENCES);
         const auto client=LoadLibraryExW(argv[2],nullptr,DONT_RESOLVE_DLL_REFERENCES);
         Check(game && client,"map installed native modules");
+        if (pedestrianConflict) {
+            DWORD old{};auto target=reinterpret_cast<uint8_t*>(game)+0x167674;
+            Check(VirtualProtect(target,1,PAGE_EXECUTE_READWRITE,&old)!=FALSE,"fixture trace conflict protection");
+            *target=0xcc;DWORD ignored{};VirtualProtect(target,1,old,&ignored);
+        }
         Check(caine::InstallNativeBridge([](const auto& message){std::cout<<message<<'\n';}),"exact production profile and hook batch");
+        Check(caine::TestPedestrianAvailable()!=pedestrianConflict,"optional trace conflict disabled existing bridge or overwrote another patch");
         caine::TestNativeOriginals(reinterpret_cast<void*>(Packet),reinterpret_cast<void*>(Release),reinterpret_cast<void*>(Paint),reinterpret_cast<void*>(Active),reinterpret_cast<void*>(Pick),reinterpret_cast<void*>(Filename));
         std::array<uint8_t,0x2838> dialog{};std::array<uint8_t,0x2804> packet{};std::array<uint8_t,0x6000> hud{};
         std::array<uint8_t,8192*12> entities{};int npc{},player{};
@@ -96,6 +105,7 @@ int wmain(int argc,wchar_t** argv) {
         Put(reinterpret_cast<uint8_t*>(game),0x70b25c,UINT32_MAX);
         Put(entities.data(),24+4,playerEntity.data());
         caine::TestNativeInteractionContinuation(reinterpret_cast<void*>(UseReturn));
+        caine::TestPedestrianContinuation(reinterpret_cast<void*>(UseReturn));
         const auto window=CreateWindowExW(0,L"STATIC",L"CAINE native interaction test",0,0,0,10,10,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
         Check(window!=nullptr,"test game-thread window");
         const auto use=reinterpret_cast<uint8_t*>(game)+0x167aa6;
@@ -127,6 +137,31 @@ int wmain(int argc,wchar_t** argv) {
         Check(!caine::ReadNativeDialogue(output),"save/load boundary retained pending use");
         UseEntry(use,&npc,playerComponent.data());caine::ClaimNativeDialogue(&owner,0,false);caine::TestExpirePendingUse();caine::PulseNativeBridge(window);
         Check(!caine::ReadNativeDialogue(output),"mod load-boundary release retained pending use");
+        // Execute the exact native direct-hit boundary. A dialogueless living
+        // pedestrian is observed without changing CanUse or calling native Use.
+        if (!pedestrianConflict) {
+        std::array<uint8_t,0x400> pedestrian{};const char pedestrianClass[]="npc_VPedestrian";
+        const char pedestrianName[]="blueblood",pedestrianDialogue[]="dlg/a.dlg";
+        Put(pedestrian.data(),0x98,pedestrian.data());Put(pedestrian.data(),0x11c,pedestrianClass);
+        Put(pedestrian.data(),0x26c,pedestrianName);Put(pedestrian.data(),0x210,20);
+        Put(entities.data(),12+4,pedestrian.data());
+        const auto trace=reinterpret_cast<uint8_t*>(game)+0x167674;
+        auto pedestrianUse=[&] { UseEntry(trace,pedestrian.data(),playerComponent.data());caine::TestExpirePendingUse();caine::PulseNativeBridge(window); };
+        pedestrianUse();Check(caine::ReadNativeDialogue(output) && std::string(output.source)=="entity://npc_vpedestrian/626c7565626c6f6f64" && output.responseCount==0,"native pedestrian trace did not expose ambient identity");
+        Check(caine::ClaimNativeDialogue(&owner,output.token,true),"pedestrian claim");
+        Put(pedestrian.data(),0x200,1);Check(!caine::ReadNativeDialogue(output),"dead pedestrian retained conversation");
+        caine::InvalidateNativeDialogue();pedestrianUse();Check(!caine::ReadNativeDialogue(output),"dead pedestrian opened conversation");
+        Put(pedestrian.data(),0x200,0);Put(pedestrian.data(),0x128,pedestrianDialogue);
+        pedestrianUse();Check(!caine::ReadNativeDialogue(output),"pedestrian observer preempted scripted dialogue");
+        Put(pedestrian.data(),0x128,static_cast<const char*>(nullptr));Put(pedestrian.data(),0x11c,"npc_VHumanCombatant");
+        pedestrianUse();Check(!caine::ReadNativeDialogue(output),"combatant accepted as pedestrian");
+        Put(pedestrian.data(),0x11c,pedestrianClass);Put(playerComponent.data(),0x208c,0u);
+        pedestrianUse();Check(!caine::ReadNativeDialogue(output),"held/scripted trace opened pedestrian chat");
+        Put(playerComponent.data(),0x208c,0x20u);UseEntry(trace,pedestrian.data(),playerComponent.data());
+        Put(entities.data(),12+8,3u);caine::TestExpirePendingUse();caine::PulseNativeBridge(window);
+        Check(!caine::ReadNativeDialogue(output),"recycled pedestrian opened conversation");
+        Put(entities.data(),12+4,&npc);Put(entities.data(),12+8,2u);
+        }
         std::vector<std::string> commands;
         auto command=[&](const std::string& text) { commands.push_back(text);Put(playerComponent.data(),0x1e78,std::stoi(text.substr(4))); };
         caine::TestNativeFovConfig(135);caine::PulseNativeBridge(window);
