@@ -3,7 +3,7 @@
 #include <functional>
 
 namespace caine {
-inline constexpr char UpdateVersion[] = "0.3.19-framework-dev";
+inline constexpr char UpdateVersion[] = "0.3.20-framework-dev";
 inline constexpr char UpdateRepository[] = "Teirdalin/PROJECT-CAINE";
 inline constexpr char UpdateAsset[] = "PROJECT-CAINE-update.zip";
 enum class UpdatePhase { Idle, Checking, Available, Downloading, Verifying, Staging, RestartReady, Error };

@@ -220,8 +220,8 @@ int wmain(int argc, wchar_t** argv) {
                 Check(sent,"real queued Unicode/Enter did not submit free text");
                 events.clear();
                 RECT client{};Check(GetClientRect(window,&client)!=FALSE,"queue client rectangle");
-                // Actual End Conversation button in the compact 1280x720 view.
-                const auto point=MAKELPARAM(382*client.right/width,470*client.bottom/height);
+                // Actual End Conversation button in the bottom 1280x720 view.
+                const auto point=MAKELPARAM(270*client.right/width,665*client.bottom/height);
                 frame(WM_MOUSEMOVE,0,point);frame(WM_LBUTTONDOWN,MK_LBUTTON,point);frame(WM_LBUTTONUP,0,point);frame(0,0);
                 bool closed{};for(const auto& event:events) closed|=event.kind==caine::MenuActionKind::Close;
                 Check(closed,"real queued mouse click did not close conversation");

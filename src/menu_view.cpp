@@ -486,7 +486,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
         }
         if(view.update.available && ImGui::Button("Update Available",{buttonWidth,buttonHeight}))actions.push_back({MenuActionKind::Update,{}});
         ImGui::End();ImGui::PopStyleColor(3);ImGui::PopStyleVar(2);
-        const char* version="PROJECT CAINE 0.3.19";
+        const char* version="PROJECT CAINE 0.3.20";
         const auto size=ImGui::CalcTextSize(version);
         draw->AddText({(width-size.x)/2,height-28*scale},IM_COL32(145,136,141,255),version);
     } else if (view.confirmation) {
@@ -500,21 +500,32 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
         const float margin=24*scale;
         ImVec2 panel{std::min(width-2*margin,1050*scale),std::min(height-2*margin,850*scale)};
         if (view.overlay) {
-            panel.x=std::min(width-2*margin,820*scale);
+            panel.x=std::min(width-2*margin,1100*scale);
             float content=0;
             for (const auto& control:view.controls) if (control.kind!=CAINE_CONTROL_INPUT)
                 content+=ImGui::CalcTextSize(control.label.c_str(),nullptr,false,std::max(40.f,panel.x-2*margin-24*scale)).y+24*scale;
-            const float maximum=std::min(height-2*margin,580*scale);
-            panel.y=std::clamp(content+225*scale,std::min(380*scale,maximum),maximum);
+            // Keep the upper scene clear, even when history or native choices
+            // are long. The history scrolls; the reply and close controls stay
+            // pinned inside the bottom panel.
+            const float maximum=std::min(height-2*margin,std::max(height*.38f,300*scale));
+            panel.y=std::clamp(content+225*scale,std::min(280*scale,maximum),maximum);
         }
         ImGui::GetBackgroundDrawList()->AddRectFilled({0,0},{width,height},view.overlay?IM_COL32(0,0,0,100):IM_COL32(0,0,0,255));
-        ImGui::SetNextWindowPos({(width-panel.x)/2,(height-panel.y)/2},ImGuiCond_Always);
+        ImGui::SetNextWindowPos({(width-panel.x)/2,view.overlay?height-panel.y-margin:(height-panel.y)/2},ImGuiCond_Always);
         ImGui::SetNextWindowSize(panel,ImGuiCond_Always);
+        if (view.overlay) {
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{20*scale,14*scale});
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{12*scale,8*scale});
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,{12*scale,7*scale});
+        }
         ImGui::Begin("CAINE game menu",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoSavedSettings);
-        ImGui::SetWindowFontScale(1.3f);ImGui::TextUnformatted(view.pageTitle.c_str());ImGui::SetWindowFontScale(1);
+        ImGui::SetWindowFontScale(view.overlay?1.15f:1.3f);ImGui::TextUnformatted(view.pageTitle.c_str());ImGui::SetWindowFontScale(1);
         ImGui::Separator();
         const bool composer=view.overlay && std::any_of(view.controls.begin(),view.controls.end(),[](const auto& control){return control.kind==CAINE_CONTROL_INPUT && (control.flags&CAINE_CONTROL_SUBMIT);});
-        ImGui::BeginChild("game-menu-content",{0,std::max(30*scale,ImGui::GetContentRegionAvail().y-(composer?165:65)*scale)},ImGuiChildFlags_NavFlattened);
+        const auto& style=ImGui::GetStyle();
+        const float footer=view.overlay?(composer?3*ImGui::GetTextLineHeight()+4*style.FramePadding.y+6*style.ItemSpacing.y+1:
+            ImGui::GetFrameHeight()+3*style.ItemSpacing.y+1):65*scale;
+        ImGui::BeginChild("game-menu-content",{0,std::max(30*scale,ImGui::GetContentRegionAvail().y-footer)},ImGuiChildFlags_NavFlattened);
         drawControls();
         if (!view.message.empty()) { ImGui::Separator();ImGui::TextWrapped("%s",view.message.c_str()); }
         ImGui::EndChild();ImGui::Separator();
@@ -522,6 +533,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
         if (ImGui::Button(view.overlay?"End Conversation":"Back")) actions.push_back({MenuActionKind::Close,{}});
         if (view.overlay) { ImGui::SameLine();ImGui::TextDisabled("Esc to close"); }
         ImGui::End();
+        if (view.overlay) ImGui::PopStyleVar(3);
     } else {
     const ImVec2 margin(24 * scale, 24 * scale);
     const ImVec2 panel(std::min(width - margin.x * 2, 1280 * scale), std::min(height - margin.y * 2, 850 * scale));
@@ -600,7 +612,7 @@ bool MenuRenderer::Render(HWND window, const MenuView& view, std::vector<MenuAct
     } else ImGui::TextWrapped("Select a mod to view its details and settings.");
     ImGui::EndChild(); ImGui::Separator();
     if (ImGui::Button("Back to main menu")) actions.push_back({MenuActionKind::Close,{}});
-    ImGui::SameLine(); ImGui::TextDisabled("  ESC  /  Close     |     CAINE 0.3.19");
+    ImGui::SameLine(); ImGui::TextDisabled("  ESC  /  Close     |     CAINE 0.3.20");
     ImGui::End();
     }
     if(view.updateOpen) {

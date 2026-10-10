@@ -1,4 +1,4 @@
-# Modern menus (CAINE 0.3.19)
+# Modern menus (CAINE 0.3.20)
 
 CAINE draws inside Bloodlines with Dear ImGui 1.91.9b and the upstream DirectX 9
 backend. Normal startup through the native loader is retained.
@@ -79,8 +79,12 @@ do not draw or capture CAINE input. The passive intro skip prompt shares this sa
 presentation hook; see INTRO_SKIP.md. It owns no menu widgets or mouse cursor. GUI actions run on subsequent native menu paint,
 not inside DirectX rendering. Network requests use the mod's asynchronous worker.
 
-Conversation overlays use an adaptive compact panel, a scrolling history/choice
-area and a pinned reply composer. Long responses remain scrollable and wrapped.
+Conversation overlays use a wider bottom-anchored panel with a screen-edge
+margin, a scrolling history/choice area and a pinned reply composer. Panel
+height is capped at 38% of the screen at normal interface scale; enlarged text
+can increase that limit just enough to keep the pinned controls usable. The
+NPC and upper scene stay visible even with long responses or native choices.
+Long responses remain scrollable and wrapped.
 Reply input receives focus on opening or becoming available. A software cursor
 is drawn only for gameplay overlays; main and pause menus keep native cursor
 ownership. Window message capture is supplemented by six exact-profile native
