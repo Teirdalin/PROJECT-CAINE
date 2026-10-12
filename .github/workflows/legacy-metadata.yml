@@ -1,0 +1,26 @@
+name: Refresh legacy release metadata
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4,16 * * *'
+permissions:
+  contents: write
+concurrency:
+  group: legacy-release-metadata
+  cancel-in-progress: false
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Check official release feeds
+        run: python3 tools/refresh_legacy_manifest.py
+      - name: Publish metadata changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scripts/legacy-catalog.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Refresh official legacy release metadata'
+          git push
